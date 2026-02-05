@@ -1,0 +1,109 @@
+{
+  "name": "smolagents-ts",
+  "version": "1.0.0",
+  "description": "TypeScript implementation of smolagents - A lightweight AI agent framework with tool calling",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./models": {
+      "types": "./dist/models/index.d.ts",
+      "import": "./dist/models/index.mjs",
+      "require": "./dist/models/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.mjs",
+      "require": "./dist/tools/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:browser": "tsup --config tsup.browser.config.ts",
+    "dev": "tsup --watch",
+    "test": "USE_REAL_DATA=false vitest --run",
+    "test:wasm": "USE_REAL_DATA=false vitest --run --config vitest.wasm.config.ts",
+    "test:real": "USE_REAL_DATA=true vitest --run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage --run",
+    "test:e2e": "npm run build:browser && playwright test",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "docs": "typedoc src/index.ts",
+    "prepublishOnly": "npm run build",
+    "type-check": "tsc --noEmit",
+    "build:demo": "tsc --project tsconfig.demo.json && parcel build demo/browser-directory.html --no-cache --public-url \"./\" && SC=cpGHPages npm run script"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "handlebars": "^4.7.8",
+    "process": "^0.11.10",
+    "pyodide": "^0.29.3"
+  },
+  "peerDependencies": {
+    "@ai-sdk/openai": ">=1.0.0",
+    "ai": ">=5.0.0",
+    "openai": "^6.17.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "@ai-sdk/openai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/ui": "^2.0.0",
+    "eslint": "^9.0.0",
+    "happy-dom": "^20.5.0",
+    "openai": "^6.17.0",
+    "prettier": "^3.3.0",
+    "tsup": "^8.0.0",
+    "typedoc": "^0.26.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "openai",
+    "typescript",
+    "tool-calling",
+    "multi-agent",
+    "smolagents",
+    "vercel-ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "bugs": {
+    "url": ""
+  },
+  "homepage": ""
+}

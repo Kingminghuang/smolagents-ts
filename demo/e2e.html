@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>smolagents-ts E2E Demo</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+  <script src="../dist-browser/smolagents.browser.global.js"></script>
+  <style>
+    :root {
+      --bg: #f7f5f0;
+      --card: #ffffff;
+      --ink: #1f2428;
+      --muted: #6b7280;
+      --accent: #0c7a6b;
+      --accent-dark: #0a6a5d;
+      --outline: #e5e7eb;
+    }
+
+    body {
+      font-family: 'Charter', 'Georgia', serif;
+      background: radial-gradient(circle at top left, #f3efe6, var(--bg));
+      color: var(--ink);
+      margin: 0;
+      padding: 24px;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      letter-spacing: 0.2px;
+    }
+
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--outline);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+      margin-bottom: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    input[type='text'],
+    input[type='password'] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--outline);
+      border-radius: 10px;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 15px;
+      transition:
+        transform 0.1s ease,
+        background 0.2s ease;
+    }
+
+    button:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      background: #cbd5e1;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    #status {
+      font-style: italic;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    #output {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      font-family: 'IBM Plex Mono', 'SFMono-Regular', monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      min-height: 280px;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>smolagents-ts E2E Demo</h1>
+      <p>Run ToolCallingAgent and CodeAgent in a real browser using the File System tools.</p>
+      <div class="grid">
+        <div>
+          <label for="apiKey">OPENAI_API_KEY</label>
+          <input type="password" id="apiKey" placeholder="sk-..." value="" />
+        </div>
+        <div>
+          <label for="baseURL">OPENAI_BASE_URL</label>
+          <input type="text" id="baseURL" placeholder="https://api.openai.com/v1" value="https://api.deepseek.com" />
+        </div>
+        <div>
+          <label for="model">OPENAI_MODEL</label>
+          <input type="text" id="model" placeholder="gpt-4o" value="deepseek-chat" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="actions">
+        <button id="selectDirBtn" type="button">Select Workspace Directory</button>
+        <button id="runToolCallingBtn">Run ToolCallingAgent</button>
+        <button id="runCodeAgentBtn">Run CodeAgent</button>
+        <button id="clearBtn" type="button">Clear Output</button>
+      </div>
+      <div id="directoryStatus">Workspace: Not selected.</div>
+      <div id="status">Ready.</div>
+      <div id="output">Output will appear here...</div>
+    </div>
+  </div>
+
+  <script>
+    const {
+      BrowserGetFileInfoTool,
+      BrowserListDirectoryTool,
+      BrowserReadTextFileTool,
+      CodeAgent,
+      OpenAIModel,
+      ToolCallingAgent,
+    } = SmolAgents;
+
+    const outputElement = document.getElementById('output');
+    const statusElement = document.getElementById('status');
+    const directoryStatusElement = document.getElementById('directoryStatus');
+    const runToolCallingBtn = document.getElementById('runToolCallingBtn');
+    const runCodeAgentBtn = document.getElementById('runCodeAgentBtn');
+    const selectDirBtn = document.getElementById('selectDirBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    let rootDirHandle = null;
+
+    function log(message) {
+      outputElement.textContent += `${message}\n`;
+      outputElement.scrollTop = outputElement.scrollHeight;
+    }
+
+    function resetOutput() {
+      outputElement.textContent = '';
+    }
+
+    function updateDirectoryStatus() {
+      if (rootDirHandle) {
+        directoryStatusElement.textContent = `Workspace: ${rootDirHandle.name}`;
+        runToolCallingBtn.disabled = false;
+        runCodeAgentBtn.disabled = false;
+      } else {
+        directoryStatusElement.textContent = 'Workspace: Not selected.';
+        runToolCallingBtn.disabled = true;
+        runCodeAgentBtn.disabled = true;
+      }
+    }
+
+    function readConfig() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const baseURL = document.getElementById('baseURL').value.trim();
+      const modelName = document.getElementById('model').value.trim();
+
+      if (!apiKey) {
+        alert('Please enter OPENAI_API_KEY');
+        return null;
+      }
+
+      return {
+        apiKey,
+        baseURL: baseURL || undefined,
+        modelName: modelName || 'gpt-4o',
+      };
+    }
+
+    function setRunning(isRunning, label) {
+      runToolCallingBtn.disabled = isRunning;
+      runCodeAgentBtn.disabled = isRunning;
+      statusElement.textContent = isRunning ? label : 'Ready.';
+    }
+
+    async function selectWorkspaceDirectory() {
+      if (!('showDirectoryPicker' in window)) {
+        alert('This browser does not support the File System Access API.');
+        return;
+      }
+
+      try {
+        rootDirHandle = await window.showDirectoryPicker();
+        updateDirectoryStatus();
+        log(`WORKSPACE_SELECTED: ${rootDirHandle.name}`);
+      } catch (error) {
+        const message = error?.message || error;
+        log(`ERROR: ${message}`);
+      }
+    }
+
+    function createFsTools() {
+      if (!rootDirHandle) return [];
+      return [
+        new BrowserListDirectoryTool(rootDirHandle),
+        new BrowserReadTextFileTool(rootDirHandle),
+        new BrowserGetFileInfoTool(rootDirHandle),
+      ];
+    }
+
+    const FS_PROMPT =
+      'You are testing browser file system tools. First call list_directory on ".". ' +
+      'If there is at least one file entry, pick the first file entry name and then: ' +
+      '1) call read_text_file with path set to that file name and head=5, ' +
+      '2) call get_file_info with the same path. ' +
+      'If there are no files, respond with a short explanation.';
+
+    async function runToolCallingAgent() {
+      const config = readConfig();
+      if (!config) return;
+      if (!rootDirHandle) {
+        alert('Please select a workspace directory first.');
+        return;
+      }
+
+      resetOutput();
+      log('-- ToolCallingAgent Run --');
+      setRunning(true, 'ToolCallingAgent running...');
+
+      const model = new OpenAIModel({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+        defaultModel: config.modelName,
+        dangerouslyAllowBrowser: true,
+      });
+
+      const agent = new ToolCallingAgent({
+        model,
+        tools: createFsTools(),
+        verbosity_level: 2,
+        stream_outputs: true,
+      });
+
+      log('SYSTEM_PROMPT:');
+      log(agent.get_memory().system_prompt.system_prompt);
+
+      try {
+        const stream = agent.run(FS_PROMPT, { stream: true });
+
+        for await (const event of stream) {
+          if (!event || typeof event !== 'object') continue;
+
+          if ('name' in event && event.name) {
+            log(`TOOL_CALL: ${event.name}`);
+            if (event.arguments) {
+              log(`TOOL_ARGS: ${JSON.stringify(event.arguments)}`);
+            }
+          }
+
+          if ('observation' in event && event.observation) {
+            log(`TOOL_RESPONSE: ${event.observation}`);
+          }
+
+          if ('is_final_answer' in event && event.is_final_answer) {
+            const output = event.output;
+            log(`FINAL_ANSWER: ${typeof output === 'string' ? output : JSON.stringify(output)}`);
+          }
+        }
+      } catch (error) {
+        log(`ERROR: ${error.message || error}`);
+      } finally {
+        setRunning(false, 'Ready.');
+      }
+    }
+
+    async function runCodeAgent() {
+      const config = readConfig();
+      if (!config) return;
+      if (!rootDirHandle) {
+        alert('Please select a workspace directory first.');
+        return;
+      }
+
+      resetOutput();
+      log('-- CodeAgent Run --');
+      setRunning(true, 'CodeAgent running...');
+
+      let loggedExecution = false;
+
+      const model = new OpenAIModel({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+        defaultModel: config.modelName,
+        dangerouslyAllowBrowser: true,
+      });
+
+      const agent = new CodeAgent({
+        model,
+        tools: createFsTools(),
+        verbosity_level: 2,
+        stream_outputs: true,
+        authorized_imports: ['*'],
+      });
+
+      log('SYSTEM_PROMPT:');
+      log(agent.get_memory().system_prompt.system_prompt);
+
+      try {
+        const stream = agent.run(FS_PROMPT, { stream: true });
+
+        for await (const event of stream) {
+          if (!event || typeof event !== 'object') continue;
+
+          if ('name' in event && event.name) {
+            log(`TOOL_CALL: ${event.name}`);
+            if (event.arguments) {
+              log(`TOOL_ARGS: ${JSON.stringify(event.arguments)}`);
+            }
+          }
+
+          if (event.name === 'python_interpreter' && event.arguments?.code) {
+            log('CODE_GENERATED:');
+            log(event.arguments.code);
+          }
+
+          if ('observation' in event && event.observation) {
+            log(`EXECUTION_LOGS: ${event.observation}`);
+            loggedExecution = true;
+          }
+
+          if ('is_final_answer' in event && event.is_final_answer) {
+            if (!loggedExecution) {
+              log('EXECUTION_LOGS:');
+              loggedExecution = true;
+            }
+            const output = event.output;
+            log(`FINAL_ANSWER: ${typeof output === 'string' ? output : JSON.stringify(output)}`);
+          }
+        }
+      } catch (error) {
+        log(`ERROR: ${error.message || error}`);
+      } finally {
+        setRunning(false, 'Ready.');
+      }
+    }
+
+    runToolCallingBtn.addEventListener('click', () => {
+      void runToolCallingAgent();
+    });
+
+    runCodeAgentBtn.addEventListener('click', () => {
+      void runCodeAgent();
+    });
+
+    selectDirBtn.addEventListener('click', () => {
+      void selectWorkspaceDirectory();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      resetOutput();
+      statusElement.textContent = 'Ready.';
+    });
+
+    updateDirectoryStatus();
+  </script>
+</body>
+
+</html>
