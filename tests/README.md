@@ -17,10 +17,15 @@ tests/
 │   ├── memory/                # Memory tests
 │   ├── tools/                 # Tool tests
 │   └── utils/                 # Utility tests
-└── integration/               # Integration tests
-    ├── agent-run.test.ts      # Complete agent runs
-    ├── streaming.test.ts      # Streaming functionality
-    └── tool-execution.test.ts # Tool execution
+├── integration/               # Integration tests
+│   ├── agent-run.test.ts      # Complete agent runs
+│   ├── code-agent.test.ts     # Code agent integration
+│   ├── code-agent-real.test.ts # Code agent with real Pyodide
+│   ├── streaming.test.ts      # Streaming functionality
+│   └── tool-execution.test.ts # Tool execution
+└── wasm/                      # Wasm/Python executor tests
+    ├── python-executor-default-tools.test.ts
+    └── python-executor-fs-tools.test.ts
 ```
 
 ## Running Tests
@@ -37,6 +42,9 @@ npm run test:coverage
 
 # Run E2E demo tests (Playwright)
 npm run test:e2e
+
+# Run WASM tests (Pyodide)
+npm run test:wasm
 
 # Run specific test file
 npm test tests/unit/agents/tool-calling-agent.test.ts

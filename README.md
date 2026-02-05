@@ -136,6 +136,9 @@ npm test
 # Run E2E demo tests (Playwright)
 npm run test:e2e
 
+# Run WASM tests
+npm run test:wasm
+
 # Run tests with UI
 npm run test:ui
 
