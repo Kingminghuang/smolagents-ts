@@ -347,6 +347,11 @@ import difflib
 import importlib
 import inspect
 import sys
+from js import null as __smolagents_jsnull
+try:
+    from js import undefined as __smolagents_jsundefined
+except Exception:
+    __smolagents_jsundefined = None
 
 __SMOLAGENTS_FILENAME__ = "<smolagents>"
 
@@ -414,6 +419,16 @@ def __smolagents_build_safe_builtins(allowed_imports, allowed_dangerous):
             safe[name] = None
     safe["__import__"] = __smolagents_safe_import_factory(allowed_imports)
     return safe
+
+def __smolagents_js_sentinel_to_none(value):
+    if value is __smolagents_jsnull or value is __smolagents_jsundefined:
+        return None
+    if isinstance(value, dict):
+        return {k: __smolagents_js_sentinel_to_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        items = [__smolagents_js_sentinel_to_none(v) for v in value]
+        return items if isinstance(value, list) else tuple(items)
+    return value
 
 def __smolagents_config_get(config, key, default=None):
     try:
@@ -535,7 +550,11 @@ class __smolagents_tool_await_transformer(ast.NodeTransformer):
             self.tool_names | self.async_function_names
         ):
             if not self.function_stack or self.function_stack[-1] in self.async_function_names:
-                return ast.Await(value=node)
+                return ast.Call(
+                    func=ast.Name(id="__smolagents_js_sentinel_to_none", ctx=ast.Load()),
+                    args=[ast.Await(value=node)],
+                    keywords=[],
+                )
         return node
 
 def __smolagents_transform_code(code, tool_names):
@@ -629,11 +648,13 @@ async def __smolagents_normalize_last_expr(value):
             except Exception:
                 pass
         if isinstance(value, dict):
-            return {k: await __smolagents_normalize_last_expr(v) for k, v in value.items()}
+            normalized = {k: await __smolagents_normalize_last_expr(v) for k, v in value.items()}
+            return __smolagents_js_sentinel_to_none(normalized)
         if isinstance(value, (list, tuple)):
             items = [await __smolagents_normalize_last_expr(v) for v in value]
-            return items if isinstance(value, list) else tuple(items)
-        return value
+            normalized = items if isinstance(value, list) else tuple(items)
+            return __smolagents_js_sentinel_to_none(normalized)
+        return __smolagents_js_sentinel_to_none(value)
     except Exception:
         return value
 
