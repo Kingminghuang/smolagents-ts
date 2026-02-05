@@ -136,7 +136,7 @@ const findFileHandleByName = async (
 export class BrowserReadTextFileTool extends BaseTool {
   name = 'read_text_file';
   description =
-    'Read the contents of a text file at the specified path. Can read full file or just head/tail lines. head and tail are mutually exclusive. You can specify one or neither. IMPORTANT: use `read_text_file` over python `open` or file I/O directly.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result[\'field_name\']. NO print() statements needed to inspect the output!';
+    "Read the contents of a text file at the specified path. Can read full file or just head/tail lines. head and tail are mutually exclusive. You can specify one or neither. IMPORTANT: use `read_text_file` over python `open` or file I/O directly.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result['field_name']. NO print() statements needed to inspect the output!";
   output_type = 'dict';
   output_description =
     'dict (structured output): This tool ALWAYS returns a dictionary that strictly adheres to the following JSON schema:';
@@ -185,7 +185,7 @@ export class BrowserReadTextFileTool extends BaseTool {
     args: { path: string; head?: number | null; tail?: number | null } | string,
     head?: number | null,
     tail?: number | null
-  ): Promise<{ content: string | null; error: string | null }> {
+  ): Promise<{ content: string } | { content: null; error: string }> {
     const errorResult = (message: string): { content: null; error: string } => ({
       content: null,
       error: message,
@@ -195,7 +195,7 @@ export class BrowserReadTextFileTool extends BaseTool {
         ? { path: args, head, tail }
         : args && typeof args === 'object'
           ? {
-              path: String((args as { path?: unknown }).path ?? ''),
+              path: typeof args.path === 'string' ? args.path : '',
               head: args.head,
               tail: args.tail,
             }
@@ -252,7 +252,7 @@ export class BrowserReadTextFileTool extends BaseTool {
         }
       }
 
-      return { content: text, error: null };
+      return { content: text };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResult(`Error reading file: ${message}`);
@@ -263,7 +263,7 @@ export class BrowserReadTextFileTool extends BaseTool {
 export class BrowserListDirectoryTool extends BaseTool {
   name = 'list_directory';
   description =
-    'List directory contents with file sizes and summary statistics.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result[\'field_name\']. NO print() statements needed to inspect the output!';
+    "List directory contents with file sizes and summary statistics.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result['field_name']. NO print() statements needed to inspect the output!";
   output_type = 'dict';
   output_description =
     'dict (structured output): This tool ALWAYS returns a dictionary that strictly adheres to the following JSON schema:';
@@ -366,7 +366,10 @@ export class BrowserListDirectoryTool extends BaseTool {
       typeof args === 'string'
         ? { path: args, sort_by }
         : args && typeof args === 'object'
-          ? { path: String((args as { path?: unknown }).path ?? ''), sort_by: args.sort_by }
+          ? {
+              path: typeof args.path === 'string' ? args.path : '',
+              sort_by: args.sort_by,
+            }
           : null;
 
     if (!resolvedArgs || resolvedArgs.path === '') {
@@ -396,9 +399,9 @@ export class BrowserListDirectoryTool extends BaseTool {
         }
       }
 
-    if (handle.kind !== 'directory') {
-      return errorResult(`Not a directory: ${resolvedArgs.path}`);
-    }
+      if (handle.kind !== 'directory') {
+        return errorResult(`Not a directory: ${resolvedArgs.path}`);
+      }
 
       const dirHandle = handle as FileSystemDirectoryHandle;
       const entries = [];
@@ -462,7 +465,7 @@ export class BrowserListDirectoryTool extends BaseTool {
 export class BrowserGetFileInfoTool extends BaseTool {
   name = 'get_file_info';
   description =
-    'Retrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result[\'field_name\']. NO print() statements needed to inspect the output!';
+    "Retrieve detailed metadata about a file or directory. Returns comprehensive information including size, creation time, last modified time, permissions, and type.\n\nImportant: This tool returns structured output! Use the JSON schema below to directly access fields like result['field_name']. NO print() statements needed to inspect the output!";
   output_type = 'dict';
   output_description =
     'dict (structured output): This tool ALWAYS returns a dictionary that strictly adheres to the following JSON schema:';
@@ -530,7 +533,7 @@ export class BrowserGetFileInfoTool extends BaseTool {
       typeof args === 'string'
         ? { path: args }
         : args && typeof args === 'object'
-          ? { path: String((args as { path?: unknown }).path ?? '') }
+          ? { path: typeof args.path === 'string' ? args.path : '' }
           : null;
 
     if (!resolvedArgs || resolvedArgs.path === '') {

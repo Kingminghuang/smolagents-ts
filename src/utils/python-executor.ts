@@ -60,14 +60,14 @@ export class PyodideExecutor {
       ffi?: { toPy?: (value: unknown) => unknown; toJs?: (value: unknown) => unknown };
     };
     const toPy = api.toPy
-      ? (value: unknown, options?: ToPyOptions) => api.toPy!(value, options)
+      ? (value: unknown, options?: ToPyOptions) => api.toPy?.(value, options) ?? value
       : api.ffi?.toPy
-        ? (value: unknown) => api.ffi!.toPy!(value)
+        ? (value: unknown) => api.ffi?.toPy?.(value) ?? value
         : (value: unknown) => value;
     const toJs = api.toJs
-      ? (value: unknown) => api.toJs!(value)
+      ? (value: unknown) => api.toJs?.(value) ?? value
       : api.ffi?.toJs
-        ? (value: unknown) => api.ffi!.toJs!(value)
+        ? (value: unknown) => api.ffi?.toJs?.(value) ?? value
         : (value: unknown) => value;
     return { toPy, toJs };
   }
@@ -127,7 +127,10 @@ export class PyodideExecutor {
       }
 
       if (value instanceof Map) {
-        const data = Array.from(value.entries()).map(([key, entry]) => [key, convert(entry)]);
+        const data: Array<[unknown, unknown]> = Array.from(value.entries()).map(([key, entry]) => [
+          key,
+          convert(entry),
+        ]);
         return forLog ? { __js_type__: 'Map', value: data } : data;
       }
 
@@ -165,9 +168,10 @@ export class PyodideExecutor {
             // fall through
           }
         }
+        const fallbackValue = Object.prototype.toString.call(value);
         return forLog
-          ? { __js_type__: descriptor.jsConstructor ?? descriptor.jsType, value: String(value) }
-          : String(value);
+          ? { __js_type__: descriptor.jsConstructor ?? descriptor.jsType, value: fallbackValue }
+          : fallbackValue;
       }
 
       const maybeToJson = value as { toJSON?: () => unknown };
@@ -178,13 +182,14 @@ export class PyodideExecutor {
       if ('name' in value && 'kind' in value) {
         const handle = value as { name?: unknown; kind?: unknown };
         const data = {
-          name: handle.name !== undefined ? String(handle.name) : undefined,
-          kind: handle.kind !== undefined ? String(handle.kind) : undefined,
+          name: typeof handle.name === 'string' ? handle.name : undefined,
+          kind: typeof handle.kind === 'string' ? handle.kind : undefined,
         };
         return forLog ? { __js_type__: 'FileSystemHandle', ...data } : data;
       }
 
-      return forLog ? { __js_type__: 'Unknown', value: String(value) } : String(value);
+      const fallbackValue = Object.prototype.toString.call(value);
+      return forLog ? { __js_type__: 'Unknown', value: fallbackValue } : fallbackValue;
     };
   }
 
@@ -295,9 +300,9 @@ export class PyodideExecutor {
         tool_names: this.toolNames,
       });
 
-      const result = (await pyodide.runPythonAsync(
+      const result: unknown = await pyodide.runPythonAsync(
         '__smolagents_run(__smolagents_code__, __smolagents_config__)'
-      )) as unknown;
+      );
       const jsResult = toJs(result) as { is_final_answer: boolean; value: unknown };
 
       return {

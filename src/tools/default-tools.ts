@@ -204,7 +204,7 @@ export class SearchTool extends BaseTool {
     if (engine === 'bing') {
       return this.searchBing(query, maxResults);
     }
-    throw new Error(`Unsupported engine: ${engine}`);
+    throw new Error('Unsupported engine');
   }
 
   private async searchDuckDuckGo(query: string, maxResults: number): Promise<SearchResult[]> {

@@ -51,7 +51,8 @@ function normalizeInner(value: unknown, depth: number, seen: WeakMap<object, unk
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => normalizeInner(entry, depth - 1, seen));
+    const arrayValue: unknown[] = value;
+    return arrayValue.map((entry) => normalizeInner(entry, depth - 1, seen));
   }
 
   if (ArrayBuffer.isView(value)) {
@@ -66,7 +67,7 @@ function normalizeInner(value: unknown, depth: number, seen: WeakMap<object, unk
   }
 
   if (value instanceof Map) {
-    const entries = Array.from(value.entries()).map(([key, entry]) => [
+    const entries: Array<[unknown, unknown]> = Array.from(value.entries()).map(([key, entry]) => [
       key,
       normalizeInner(entry, depth - 1, seen),
     ]);
@@ -90,12 +91,12 @@ function normalizeInner(value: unknown, depth: number, seen: WeakMap<object, unk
     const handle = value as { name?: unknown; kind?: unknown };
     return {
       __js_type__: 'FileSystemHandle',
-      name: handle.name !== undefined ? String(handle.name) : undefined,
-      kind: handle.kind !== undefined ? String(handle.kind) : undefined,
+      name: typeof handle.name === 'string' ? handle.name : undefined,
+      kind: typeof handle.kind === 'string' ? handle.kind : undefined,
     };
   }
 
-  const prototype = Object.getPrototypeOf(value);
+  const prototype = Object.getPrototypeOf(value as object) as object | null;
   const isPlain = prototype === Object.prototype || prototype === null;
   if (isPlain) {
     const result: Record<string, unknown> = {};
@@ -108,6 +109,6 @@ function normalizeInner(value: unknown, depth: number, seen: WeakMap<object, unk
   const constructorName = (value as { constructor?: { name?: string } }).constructor?.name;
   return {
     __js_type__: constructorName || 'Object',
-    value: String(value),
+    value: Object.prototype.toString.call(value),
   };
 }

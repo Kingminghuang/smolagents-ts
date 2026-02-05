@@ -48,21 +48,20 @@ export abstract class BaseTool implements Tool {
   }
 
   private _input_to_schema(input: ToolInput): Record<string, unknown> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const schema: any = {
+    const schema: Record<string, unknown> = {
       description: input.description || '',
     };
 
     if (input.type !== 'any') {
-      schema.type = input.type;
+      schema['type'] = input.type;
     }
 
     if (input.enum) {
-      schema.enum = input.enum;
+      schema['enum'] = input.enum;
     }
 
     if (input.type === 'array' && input.items) {
-      schema.items = this._input_to_schema(input.items);
+      schema['items'] = this._input_to_schema(input.items);
     }
 
     if (input.type === 'object') {
@@ -75,19 +74,19 @@ export abstract class BaseTool implements Tool {
             req.push(key);
           }
         }
-        schema.properties = props;
+        schema['properties'] = props;
         if (req.length > 0) {
-          schema.required = req;
+          schema['required'] = req;
         }
       }
       if (input.additionalProperties) {
-        schema.additionalProperties = this._input_to_schema(input.additionalProperties);
+        schema['additionalProperties'] = this._input_to_schema(input.additionalProperties);
       }
     }
 
     if (input.anyOf) {
-      delete schema.type; // anyOf usually replaces type
-      schema.anyOf = input.anyOf.map((subInput) => this._input_to_schema(subInput));
+      delete schema['type']; // anyOf usually replaces type
+      schema['anyOf'] = input.anyOf.map((subInput) => this._input_to_schema(subInput));
     }
 
     return schema;
