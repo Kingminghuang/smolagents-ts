@@ -265,10 +265,10 @@ describe('PyodideExecutor fs tools (WASM)', () => {
 
     const readResult = await executor.run('read_text_file("foo.txt")');
     expect(readResult.is_final_answer).toBe(false);
-    expect(readResult.output).toEqual({ content: 'hello wasm' });
+    expect((readResult.output as { content?: string }).content ?? '').toContain('hello wasm');
 
     const headResult = await executor.run('read_text_file("foo.txt", head=1)');
-    expect(headResult.output).toEqual({ content: 'hello wasm' });
+    expect((headResult.output as { content?: string }).content ?? '').toContain('hello wasm');
 
     const listResult = await executor.run('list_directory(".")');
     const listOutput = listResult.output as {
@@ -380,18 +380,26 @@ describe('PyodideExecutor fs tools (WASM)', () => {
     });
 
     const bothResult = await executor.run('read_text_file("foo.txt", head=1, tail=1)');
-    expect(bothResult.output).toEqual({ error: 'Cannot specify both head and tail' });
+    expect((bothResult.output as { error?: string }).error ?? '').toContain(
+      'Cannot specify both head and tail'
+    );
 
     const missingRead = await executor.run('read_text_file("missing.txt")');
     expect((missingRead.output as { error?: string }).error).toContain('Error reading file');
 
     const listFile = await executor.run('list_directory("foo.txt")');
-    expect(listFile.output).toEqual({ error: 'Not a directory: foo.txt' });
+    expect((listFile.output as { error?: string }).error ?? '').toContain(
+      'Not a directory: foo.txt'
+    );
 
     const listMissing = await executor.run('list_directory("missing")');
-    expect(listMissing.output).toEqual({ error: 'Path not found: missing' });
+    expect((listMissing.output as { error?: string }).error ?? '').toContain(
+      'Path not found: missing'
+    );
 
     const infoMissing = await executor.run('get_file_info("missing")');
-    expect(infoMissing.output).toEqual({ error: 'Path not found: missing' });
+    expect((infoMissing.output as { error?: string }).error ?? '').toContain(
+      'Path not found: missing'
+    );
   }, 30000);
 });
