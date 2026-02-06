@@ -9,7 +9,7 @@ import type {
   Tool,
 } from '../types/index.js';
 import { MultiStepAgent } from './multi-step-agent.js';
-import { ActionStep } from '../memory/index.js';
+import { ActionStep, TaskStep } from '../memory/index.js';
 import { populateTemplate } from '../utils/template.js';
 import { toToolCallingToolSignature } from '../utils/code.js';
 import { validateToolArguments } from '../utils/validation.js';
@@ -34,6 +34,7 @@ export class ToolCallingAgent extends MultiStepAgent {
   private stream_outputs: boolean;
   private max_tool_threads: number;
   private concurrency_limiter: ConcurrencyLimiter;
+  private format_retry_message: string;
 
   constructor(config: ToolCallingAgentConfig) {
     super(config);
@@ -41,6 +42,10 @@ export class ToolCallingAgent extends MultiStepAgent {
     this.stream_outputs = config.stream_outputs ?? false;
     this.max_tool_threads = config.max_tool_threads ?? 10;
     this.concurrency_limiter = new ConcurrencyLimiter(this.max_tool_threads);
+    this.format_retry_message =
+      'Your previous response did not follow the required Tool Calling format. ' +
+      'When tools are available and needed, respond with a short "Thought:" line ' +
+      'followed by a single Action tool call. Do not answer directly without a tool call.';
 
     // Validate streaming support
     if (
@@ -91,6 +96,35 @@ export class ToolCallingAgent extends MultiStepAgent {
   }
 
   /**
+   * Determine whether to enforce tool-calling format
+   */
+  private should_enforce_toolcalling(): boolean {
+    const has_tools =
+      Array.from(this.tools.keys()).some((name) => name !== 'final_answer') ||
+      this.managed_agents.size > 0;
+    if (!has_tools) return false;
+
+    const task_steps = this.memory.get_steps_of_type(TaskStep);
+    const task = task_steps.length > 0 ? task_steps[task_steps.length - 1]?.task : undefined;
+    if (!task) return false;
+
+    const task_lower = task.toLowerCase();
+    const tool_names = [
+      ...Array.from(this.tools.keys()).filter((name) => name !== 'final_answer'),
+      ...Array.from(this.managed_agents.keys()),
+    ];
+
+    return tool_names.some((name) => name && task_lower.includes(name.toLowerCase()));
+  }
+
+  private has_thought_prefix(message: ChatMessage): boolean {
+    if (!message.content) return false;
+    const content =
+      typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+    return /(^|\n)\s*Thought:/i.test(content);
+  }
+
+  /**
    * Execute a single step
    */
   protected async *_step_stream(
@@ -99,14 +133,16 @@ export class ToolCallingAgent extends MultiStepAgent {
     const memory_messages = this.write_memory_to_messages();
     const input_messages = [...memory_messages];
 
+    const enforce_toolcalling = this.should_enforce_toolcalling();
+    let retried_for_format = false;
+
     memory_step.model_input_messages = input_messages;
 
     let chat_message: ChatMessage;
 
     // Generate response from model
     try {
-      if (this.stream_outputs && this.model.generate_stream) {
-        // Streaming mode
+      if (this.stream_outputs && this.model.generate_stream && !enforce_toolcalling) {
         const stream_deltas: ChatMessageStreamDelta[] = [];
 
         for await (const delta of this.model.generate_stream(input_messages, {
@@ -118,8 +154,18 @@ export class ToolCallingAgent extends MultiStepAgent {
         }
 
         chat_message = agglomerateStreamDeltas(stream_deltas);
+      } else if (this.stream_outputs && this.model.generate_stream && enforce_toolcalling) {
+        const stream_deltas: ChatMessageStreamDelta[] = [];
+
+        for await (const delta of this.model.generate_stream(input_messages, {
+          stop_sequences: ['Observation:', 'Calling tools:'],
+          tools_to_call_from: this.tools_and_managed_agents,
+        })) {
+          stream_deltas.push(delta);
+        }
+
+        chat_message = agglomerateStreamDeltas(stream_deltas);
       } else {
-        // Non-streaming mode
         chat_message = await this.model.generate(input_messages, {
           stop_sequences: ['Observation:', 'Calling tools:'],
           tools_to_call_from: this.tools_and_managed_agents,
@@ -139,18 +185,57 @@ export class ToolCallingAgent extends MultiStepAgent {
       );
     }
 
-    // Parse tool calls if not already present
-    if (!chat_message.tool_calls || chat_message.tool_calls.length === 0) {
+    const parse_tool_calls = (message: ChatMessage): ChatMessage => {
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        return message;
+      }
+
       try {
-        chat_message = this.model.parse_tool_calls(chat_message);
-        memory_step.model_output_message = chat_message;
+        return this.model.parse_tool_calls(message);
       } catch (error) {
         throw new AgentParsingError(`Error parsing tool calls: ${String(error)}`, this.logger);
       }
+    };
+
+    chat_message = parse_tool_calls(chat_message);
+    memory_step.model_output_message = chat_message;
+
+    const missing_tool_call = !chat_message.tool_calls || chat_message.tool_calls.length === 0;
+    const missing_thought = enforce_toolcalling && !this.has_thought_prefix(chat_message);
+
+    if (enforce_toolcalling && (missing_tool_call || missing_thought)) {
+      retried_for_format = true;
+      const retry_messages: ChatMessage[] = [
+        ...memory_messages,
+        {
+          role: 'system',
+          content: this.format_retry_message,
+        },
+      ];
+
+      try {
+        chat_message = await this.model.generate(retry_messages, {
+          stop_sequences: ['Observation:', 'Calling tools:'],
+          tools_to_call_from: this.tools_and_managed_agents,
+        });
+      } catch (error) {
+        throw new AgentGenerationError(
+          `Error while generating output: ${String(error)}`,
+          this.logger
+        );
+      }
+
+      chat_message = parse_tool_calls(chat_message);
+      memory_step.model_output_message = chat_message;
     }
 
     // Check if we have tool calls
     if (!chat_message.tool_calls || chat_message.tool_calls.length === 0) {
+      if (enforce_toolcalling && retried_for_format) {
+        this.logger.warn(
+          'Tool calling format violation after retry. Falling back to text response.'
+        );
+      }
       // No tool calls - this is allowed in streaming mode for text responses
       // Just yield the content if available
       if (chat_message.content) {
