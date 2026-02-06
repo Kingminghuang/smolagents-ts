@@ -150,8 +150,7 @@ export class BrowserReadTextFileTool extends BaseTool {
         title: 'Content',
       },
       error: {
-        anyOf: [{ type: 'string' }, { type: 'null' }],
-        default: null,
+        type: 'string',
         description: 'The error message (if read was not successful)',
         title: 'Error',
       },
@@ -316,8 +315,7 @@ export class BrowserListDirectoryTool extends BaseTool {
         title: 'Total Size',
       },
       error: {
-        anyOf: [{ type: 'string' }, { type: 'null' }],
-        default: null,
+        type: 'string',
         description: 'The error message (if retrieval was not successful)',
         title: 'Error',
       },
@@ -353,7 +351,7 @@ export class BrowserListDirectoryTool extends BaseTool {
     total_files: number | null;
     total_dirs: number | null;
     total_size: number | null;
-    error: string | null;
+    error?: string;
   }> {
     const errorResult = (message: string) => ({
       entries: null,
@@ -453,7 +451,6 @@ export class BrowserListDirectoryTool extends BaseTool {
         total_files,
         total_dirs,
         total_size,
-        error: null,
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -493,8 +490,7 @@ export class BrowserGetFileInfoTool extends BaseTool {
         title: 'Isfile',
       },
       error: {
-        anyOf: [{ type: 'string' }, { type: 'null' }],
-        default: null,
+        type: 'string',
         description: 'The error message (if retrieval was not successful)',
         title: 'Error',
       },
@@ -520,7 +516,7 @@ export class BrowserGetFileInfoTool extends BaseTool {
     modified: string | null;
     isDirectory: boolean | null;
     isFile: boolean | null;
-    error: string | null;
+    error?: string;
   }> {
     const errorResult = (message: string) => ({
       size: null,
@@ -578,7 +574,6 @@ export class BrowserGetFileInfoTool extends BaseTool {
         modified: lastModifiedStr,
         isDirectory: isDir,
         isFile: !isDir,
-        error: null,
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
