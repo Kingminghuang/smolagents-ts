@@ -41,7 +41,24 @@ export interface PyodideExecutorOptions {
   max_operations?: number;
   max_while_iterations?: number;
   allowed_dangerous_builtins?: string[];
+  // NODEFS configuration
+  workDir?: string;  // Node.js directory to mount (default: process.cwd())
+  mountPoint?: string;  // Pyodide mount path (default: "/mnt")
 }
+
+export const BASE_BUILTIN_MODULES = [
+  "collections",
+  "datetime",
+  "itertools",
+  "math",
+  "queue",
+  "random",
+  "re",
+  "stat",
+  "statistics",
+  "time",
+  "unicodedata",
+];
 
 export class PyodideExecutor {
   private pyodide: (PyodideInterface & PyodideGlobalSetter) | null = null;
@@ -52,6 +69,10 @@ export class PyodideExecutor {
   private allowedDangerousBuiltins: string[] = [];
   private toolNames: string[] = [];
   private runtimeReady = false;
+  // NODEFS configuration and state
+  private workDir: string;
+  private mountPoint: string;
+  private isMounted = false;
 
   private getConverters() {
     const api = this.pyodide as unknown as {
@@ -193,25 +214,16 @@ export class PyodideExecutor {
     };
   }
 
-  private convertToolResultForPython(value: unknown): unknown {
-    const { toPy } = this.getConverters();
-    const defaultConverter = this.buildToPyDefaultConverter(false);
-    try {
-      return toPy(value, { depth: -1, defaultConverter });
-    } catch {
-      try {
-        return toPy(value);
-      } catch {
-        return value;
-      }
-    }
-  }
 
-  constructor(authorizedImports: string[] = [], options: PyodideExecutorOptions = {}) {
+
+  constructor(authorizedImports: string[] = BASE_BUILTIN_MODULES, options: PyodideExecutorOptions = {}) {
     this.authorizedImports = options.authorized_imports ?? authorizedImports;
     this.maxOperations = options.max_operations ?? 100000;
     this.maxWhileIterations = options.max_while_iterations ?? 10000;
     this.allowedDangerousBuiltins = options.allowed_dangerous_builtins ?? [];
+    // Initialize NODEFS configuration
+    this.workDir = options.workDir ?? process.cwd();
+    this.mountPoint = options.mountPoint ?? '/mnt';
   }
 
   async init() {
@@ -238,6 +250,21 @@ export class PyodideExecutor {
         const pyodideDir = pathModule.dirname(pyodideEntry);
         const indexURL = `${pyodideDir}${pathModule.sep}`;
         this.pyodide = (await loadPyodide({ indexURL })) as PyodideInterface & PyodideGlobalSetter;
+
+        // Mount NODEFS in Node.js environment
+        // Maps Pyodide's {mountPoint} → Node.js's {workDir}
+        try {
+          this.pyodide.FS.mkdirTree(this.mountPoint);
+          this.pyodide.FS.mount(
+            this.pyodide.FS.filesystems.NODEFS,
+            { root: this.workDir },
+            this.mountPoint
+          );
+          this.isMounted = true;
+        } catch (error) {
+          console.error('Failed to mount NODEFS:', error);
+          // Continue without mounting - tools will fail but Pyodide still works
+        }
       } else {
         // Non-browser environment (use default indexURL)
         this.pyodide = (await loadPyodide()) as PyodideInterface & PyodideGlobalSetter;
@@ -245,20 +272,39 @@ export class PyodideExecutor {
     }
   }
 
-  async sendTools(tools: ToolRegistry) {
+  async sendTools(tools: ToolRegistry, pythonToolsMap?: Record<string, string>) {
     await this.ensureRuntime();
     if (!this.pyodide) throw new Error('Pyodide not initialized');
-    this.registerAllowedDangerousBuiltins(Object.keys(tools));
-    this.toolNames = Object.keys(tools).filter((name) => name !== 'final_answer');
-    // We register tools in the global namespace of Pyodide
-    for (const [name, tool] of Object.entries(tools)) {
-      const wrappedTool = async (...args: unknown[]) => {
-        const result = await tool(...args);
-        return this.convertToolResultForPython(result);
-      };
-      this.pyodide.globals['set'](name, wrappedTool);
+
+    // Set mount point environment variable for Python tools
+    this.pyodide.runPython(`
+import os
+os.environ['PYODIDE_MOUNT_POINT'] = '${this.mountPoint}'
+    `);
+
+    // Execute injected Python tool definitions
+    if (pythonToolsMap) {
+      for (const [name, code] of Object.entries(pythonToolsMap)) {
+        try {
+          this.pyodide.runPython(code);
+        } catch (error) {
+          console.error(`Failed to inject Python tool '${name}':`, error);
+          throw error;
+        }
+      }
     }
-    await this.updateUserGlobals(Object.keys(tools));
+
+    const fsToolNames = pythonToolsMap ? Object.keys(pythonToolsMap) : [];
+
+    // Register additional tools passed to the function
+    for (const [name, tool] of Object.entries(tools)) {
+      this.pyodide.globals.set(name, tool);
+    }
+
+    this.toolNames = [...fsToolNames, ...Object.keys(tools)];
+    this.registerAllowedDangerousBuiltins(this.toolNames);
+
+    await this.updateUserGlobals(this.toolNames);
   }
 
   async sendVariables(variables: Record<string, unknown>) {
@@ -322,6 +368,30 @@ export class PyodideExecutor {
     if (this.runtimeReady) return;
     await this.pyodide.runPythonAsync(this.getRuntimePrelude());
     this.runtimeReady = true;
+  }
+
+  /**
+   * Cleanup method: unmount NODEFS and release resources
+   * MUST be called when PyodideExecutor is no longer needed
+   */
+  async cleanup() {
+    if (!this.pyodide) return;
+
+    try {
+      // Unmount NODEFS if mounted
+      if (this.isMounted) {
+        this.pyodide.FS.unmount(this.mountPoint);
+        this.isMounted = false;
+      }
+
+      // Release reference to allow GC
+      // Note: Pyodide doesn't have a destroy() method
+      this.pyodide = null;
+      this.runtimeReady = false;
+    } catch (error) {
+      console.error('Error during PyodideExecutor cleanup:', error);
+      throw error;
+    }
   }
 
   private async updateUserGlobals(names: string[]) {
@@ -425,125 +495,8 @@ def __smolagents_config_get(config, key, default=None):
         except Exception:
             return default
 
-class __smolagents_async_function_collector(ast.NodeVisitor):
-    def __init__(self, tool_names, known_async_functions):
-        super().__init__()
-        self.async_call_names = set(tool_names or []) | set(known_async_functions or [])
-        self.current_functions = []
-        self.tool_call_functions = set()
-        self.await_functions = set()
-        self.async_definitions = set()
-        self.function_calls = {}
-
-    def visit_FunctionDef(self, node):
-        name = node.name
-        self.function_calls.setdefault(name, set())
-        self.current_functions.append(name)
-        self.generic_visit(node)
-        self.current_functions.pop()
-
-    def visit_AsyncFunctionDef(self, node):
-        name = node.name
-        self.async_definitions.add(name)
-        self.function_calls.setdefault(name, set())
-        self.current_functions.append(name)
-        self.generic_visit(node)
-        self.current_functions.pop()
-
-    def visit_Await(self, node):
-        if self.current_functions:
-            self.await_functions.add(self.current_functions[-1])
-        self.generic_visit(node)
-
-    def visit_Call(self, node):
-        if self.current_functions and isinstance(node.func, ast.Name):
-            name = node.func.id
-            self.function_calls.setdefault(self.current_functions[-1], set()).add(name)
-            if name in self.async_call_names:
-                self.tool_call_functions.add(self.current_functions[-1])
-        self.generic_visit(node)
-
-def __smolagents_collect_async_functions(tree, tool_names, known_async_functions):
-    collector = __smolagents_async_function_collector(tool_names, known_async_functions)
-    collector.visit(tree)
-    async_functions = (
-        set(collector.async_definitions)
-        | set(collector.tool_call_functions)
-        | set(collector.await_functions)
-        | set(known_async_functions or [])
-    )
-    changed = True
-    while changed:
-        changed = False
-        for func_name, calls in collector.function_calls.items():
-            if func_name in async_functions:
-                continue
-            if any(call in async_functions for call in calls):
-                async_functions.add(func_name)
-                changed = True
-    return async_functions
-
-def __smolagents_collect_known_async_functions(user_globals):
-    async_functions = set()
-    for name, value in (user_globals or {}).items():
-        try:
-            if inspect.iscoroutinefunction(value):
-                async_functions.add(name)
-                continue
-            call_attr = getattr(value, "__call__", None)
-            if call_attr and inspect.iscoroutinefunction(call_attr):
-                async_functions.add(name)
-        except Exception:
-            continue
-    return async_functions
-
-class __smolagents_tool_await_transformer(ast.NodeTransformer):
-    def __init__(self, tool_names, async_function_names):
-        super().__init__()
-        self.tool_names = set(tool_names or [])
-        self.async_function_names = set(async_function_names or [])
-        self.in_await = False
-        self.function_stack = []
-
-    def visit_Await(self, node):
-        previous = self.in_await
-        self.in_await = True
-        node.value = self.visit(node.value)
-        self.in_await = previous
-        return node
-
-    def visit_FunctionDef(self, node):
-        self.function_stack.append(node.name)
-        node = self.generic_visit(node)
-        self.function_stack.pop()
-        if node.name in self.async_function_names:
-            fields = {field: getattr(node, field) for field in node._fields}
-            async_node = ast.AsyncFunctionDef(**fields)
-            return ast.copy_location(async_node, node)
-        return node
-
-    def visit_AsyncFunctionDef(self, node):
-        self.function_stack.append(node.name)
-        node = self.generic_visit(node)
-        self.function_stack.pop()
-        return node
-
-    def visit_Call(self, node):
-        node = self.generic_visit(node)
-        if self.in_await:
-            return node
-        if isinstance(node.func, ast.Name) and node.func.id in (
-            self.tool_names | self.async_function_names
-        ):
-            if not self.function_stack or self.function_stack[-1] in self.async_function_names:
-                return ast.Await(value=node)
-        return node
-
-def __smolagents_transform_code(code, tool_names):
+def __smolagents_transform_code(code):
     tree = ast.parse(code, filename=__SMOLAGENTS_FILENAME__, mode="exec")
-    known_async_functions = __smolagents_collect_known_async_functions(__smolagents_user_globals__)
-    async_functions = __smolagents_collect_async_functions(tree, tool_names, known_async_functions)
-    tree = __smolagents_tool_await_transformer(tool_names, async_functions).visit(tree)
     while_lines = {node.lineno for node in ast.walk(tree) if isinstance(node, ast.While)}
     if tree.body:
         last = tree.body[-1]
@@ -620,23 +573,7 @@ def __smolagents_format_runtime_error(error, code):
                 message += f"\\nMaybe you meant one of these indexes instead: {suggestion}"
     return message
 
-async def __smolagents_normalize_last_expr(value):
-    try:
-        if inspect.isawaitable(value):
-            value = await value
-        if hasattr(value, "to_py") and callable(getattr(value, "to_py")):
-            try:
-                value = value.to_py()
-            except Exception:
-                pass
-        if isinstance(value, dict):
-            return {k: await __smolagents_normalize_last_expr(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            items = [await __smolagents_normalize_last_expr(v) for v in value]
-            return items if isinstance(value, list) else tuple(items)
-        return value
-    except Exception:
-        return value
+
 
 async def __smolagents_run(code, config):
     allowed_imports = list(__smolagents_config_get(config, "authorized_imports", []) or [])
@@ -651,7 +588,7 @@ async def __smolagents_run(code, config):
     user_globals["__smolagents_last_expr__"] = None
 
     try:
-        tree, while_lines = __smolagents_transform_code(code, tool_names)
+        tree, while_lines = __smolagents_transform_code(code)
         forbidden_calls = {"eval", "exec", "compile"} - set(allowed_dangerous)
         if forbidden_calls:
             __smolagents_check_forbidden_calls(tree, forbidden_calls)
@@ -683,7 +620,6 @@ async def __smolagents_run(code, config):
         finally:
             sys.settrace(previous_trace)
         last_expr = user_globals.get("__smolagents_last_expr__")
-        last_expr = await __smolagents_normalize_last_expr(last_expr)
         user_globals["__smolagents_last_expr__"] = last_expr
 
         return {"is_final_answer": False, "value": last_expr}

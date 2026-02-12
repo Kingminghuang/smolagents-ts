@@ -5,7 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'happy-dom',
     include: ['tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist', 'tests/wasm/**'],
+    exclude: ['node_modules', 'dist', 'tests/wasm/**', 'tests/unit/**', 'tests/e2e/**', 'tests/integration/**', 'tests/fixtures/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

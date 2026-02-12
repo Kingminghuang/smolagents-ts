@@ -181,24 +181,13 @@ export class BrowserReadTextFileTool extends BaseTool {
   }
 
   async forward(
-    args: { path: string; head?: number | null; tail?: number | null } | string,
-    head?: number | null,
-    tail?: number | null
+    args: { path: string; head?: number | null; tail?: number | null }
   ): Promise<{ content: string } | { content: null; error: string }> {
     const errorResult = (message: string): { content: null; error: string } => ({
       content: null,
       error: message,
     });
-    const resolvedArgs =
-      typeof args === 'string'
-        ? { path: args, head, tail }
-        : args && typeof args === 'object'
-          ? {
-              path: typeof args.path === 'string' ? args.path : '',
-              head: args.head,
-              tail: args.tail,
-            }
-          : null;
+    const resolvedArgs = args;
 
     if (!resolvedArgs || resolvedArgs.path === '') {
       return errorResult('Invalid path argument');
@@ -344,8 +333,7 @@ export class BrowserListDirectoryTool extends BaseTool {
   }
 
   async forward(
-    args: { path: string; sort_by?: string } | string,
-    sort_by: string = 'name'
+    args: { path: string; sort_by?: string }
   ): Promise<{
     entries: Array<{ path: string; type: FileSystemHandleKind; size: number }> | null;
     total_files: number | null;
@@ -360,15 +348,7 @@ export class BrowserListDirectoryTool extends BaseTool {
       total_size: null,
       error: message,
     });
-    const resolvedArgs =
-      typeof args === 'string'
-        ? { path: args, sort_by }
-        : args && typeof args === 'object'
-          ? {
-              path: typeof args.path === 'string' ? args.path : '',
-              sort_by: args.sort_by,
-            }
-          : null;
+    const resolvedArgs = args;
 
     if (!resolvedArgs || resolvedArgs.path === '') {
       return errorResult('Invalid path argument');
@@ -511,7 +491,7 @@ export class BrowserGetFileInfoTool extends BaseTool {
     super();
   }
 
-  async forward(args: { path: string } | string): Promise<{
+  async forward(args: { path: string }): Promise<{
     size: number | null;
     modified: string | null;
     isDirectory: boolean | null;
@@ -525,12 +505,7 @@ export class BrowserGetFileInfoTool extends BaseTool {
       isFile: null,
       error: message,
     });
-    const resolvedArgs =
-      typeof args === 'string'
-        ? { path: args }
-        : args && typeof args === 'object'
-          ? { path: typeof args.path === 'string' ? args.path : '' }
-          : null;
+    const resolvedArgs = args;
 
     if (!resolvedArgs || resolvedArgs.path === '') {
       return errorResult('Invalid path argument');

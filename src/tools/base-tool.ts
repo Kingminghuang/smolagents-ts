@@ -15,7 +15,7 @@ export abstract class BaseTool implements Tool {
   /**
    * Execute the tool
    */
-  abstract forward(...args: unknown[]): Promise<unknown>;
+  abstract forward(args: Record<string, any>): Promise<unknown>;
 
   /**
    * Convert tool to dictionary format for LLM

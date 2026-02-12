@@ -12,6 +12,7 @@ dist-browser/
 # Logs
 logs/
 *.log
+*.txt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -42,3 +43,4 @@ temp/
 *.tmp
 
 misc/
+nested/

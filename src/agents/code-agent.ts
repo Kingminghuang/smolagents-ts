@@ -32,6 +32,7 @@ export class CodeAgent extends MultiStepAgent {
       'datetime',
       'itertools',
       'math',
+      'os',
       'queue',
       'random',
       're',
@@ -39,6 +40,9 @@ export class CodeAgent extends MultiStepAgent {
       'statistics',
       'time',
       'unicodedata',
+      'json',
+      'base64',
+      'pathlib'
     ];
 
     this.code_block_tags = config.code_block_tags || ['<code>', '</code>'];
@@ -168,25 +172,17 @@ export class CodeAgent extends MultiStepAgent {
 
     await this.executor.sendVariables(Object.fromEntries(this.state));
 
-    const tool_map: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
-    for (const [name, tool] of this.tools) {
-      tool_map[name] = async (...args: unknown[]) => tool.forward(args[0]);
+    // Collect Python implementations from tools
+    const pythonToolsMap: Record<string, string> = {};
+    for (const tool of this.tools.values()) {
+      if (tool.pythonCode) {
+        pythonToolsMap[tool.name] = tool.pythonCode;
+      }
     }
 
-    for (const [name, agent] of this.managed_agents) {
-      tool_map[name] = async (...args: unknown[]) => {
-        const [task, additional_args] = args;
-        return agent.run(String(task), {
-          additional_args:
-            additional_args && typeof additional_args === 'object'
-              ? (additional_args as Record<string, unknown>)
-              : undefined,
-          reset: true,
-        });
-      };
-    }
-
-    await this.executor.sendTools(tool_map);
+    // Python fs-tools and other Python-native tools are now injected here
+    // No need to build tool_map for them since they are Python-native
+    await this.executor.sendTools({}, pythonToolsMap);
 
     let code_output: CodeOutput;
     try {
@@ -215,5 +211,13 @@ export class CodeAgent extends MultiStepAgent {
       is_final_answer: code_output.is_final_answer,
       observation: observationForModel,
     };
+  }
+
+  /**
+   * Cleanup method - MUST be called when agent is no longer needed
+   * This ensures NODEFS is unmounted and resources are released
+   */
+  async cleanup() {
+    await this.executor.cleanup();
   }
 }

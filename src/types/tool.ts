@@ -19,6 +19,11 @@ export interface Tool {
    * Convert tool to dictionary format for LLM
    */
   to_dict(): ToolDefinition;
+
+  /**
+   * Optional Python implementation code for PyodideExecutor
+   */
+  pythonCode?: string;
 }
 
 /**
