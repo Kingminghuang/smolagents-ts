@@ -33,8 +33,8 @@ export class LsTool extends BaseTool {
     pythonCode = PYTHON_FS_PRELUDE + PYTHON_LS_TOOL;
 
     inputs = {
-        path: { type: "string" as const, description: "Directory to list (default: current directory)", nullable: true },
-        limit: { type: "number" as const, description: "Maximum number of entries to return (default: 500)", nullable: true }
+        path: { type: "string" as const, description: "Directory to list (default: current directory)", default: "." },
+        limit: { type: "integer" as const, description: "Maximum number of entries to return (default: 500)", default: 500 }
     };
 
     constructor(protected cwd: string) {

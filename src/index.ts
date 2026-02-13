@@ -17,6 +17,6 @@ export * from './utils/index.js';
 // Re-export commonly used classes for convenience
 export { ToolCallingAgent, MultiStepAgent } from './agents/index.js';
 export { OpenAIModel, BaseModel } from './models/index.js';
-export { BaseTool, FinalAnswerTool, CalculatorTool, SearchTool } from './tools/index.js';
+export { BaseTool, FinalAnswerTool, SearchTool } from './tools/index.js';
 export { AgentMemory } from './memory/index.js';
 export { AgentLogger } from './logger/index.js';

@@ -45,8 +45,8 @@ export class ReadTool extends BaseTool {
 
     inputs = {
         path: { type: "string" as const, description: "Path to the file to read (relative or absolute)" },
-        offset: { type: "number" as const, description: "Line number to start reading from (1-indexed)", nullable: true },
-        limit: { type: "number" as const, description: "Maximum number of lines to read", nullable: true }
+        offset: { type: "integer" as const, description: "Line number to start reading from (1-indexed)", default: 1 },
+        limit: { type: "integer" as const, description: "Maximum number of lines to read", nullable: true }
     };
 
     constructor(protected cwd: string) {

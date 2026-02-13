@@ -1,45 +1,6 @@
 import { BaseTool } from './base-tool.js';
 import type { ToolInput } from '../types/index.js';
 
-/**
- * Calculator tool - performs basic math operations
- */
-export class CalculatorTool extends BaseTool {
-  name = 'calculator';
-  description = 'Performs mathematical calculations. Supports basic arithmetic operations.';
-
-  inputs: Record<string, ToolInput> = {
-    expression: {
-      type: 'string',
-      description: 'Mathematical expression to evaluate (e.g., "2 + 2", "15 * 7")',
-    },
-  };
-
-  output_type = 'number';
-
-  override forward(args: { expression: string }): Promise<number> {
-    return Promise.resolve(this.evaluate(args.expression));
-  }
-
-  private evaluate(expression: string): number {
-    try {
-      // Simple evaluation using Function constructor
-      // Note: In production, use a proper math parser library like mathjs
-      const sanitized = expression.replace(/[^0-9+\-*/().\s]/g, '');
-
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
-      const result = Function(`'use strict'; return (${sanitized})`)() as number;
-
-      if (typeof result !== 'number' || !isFinite(result)) {
-        throw new Error('Invalid result');
-      }
-
-      return result;
-    } catch (error) {
-      throw new Error(`Failed to evaluate expression "${expression}": ${String(error)}`);
-    }
-  }
-}
 
 /**
  * Final answer tool - used to return the final answer to the user

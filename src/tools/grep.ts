@@ -38,12 +38,12 @@ export class GrepTool extends BaseTool {
 
     inputs = {
         pattern: { type: "string" as const, description: "Search pattern (regex or literal string)" },
-        path: { type: "string" as const, description: "Directory or file to search (default: current directory)", nullable: true },
+        path: { type: "string" as const, description: "Directory or file to search (default: current directory)", default: "." },
         glob: { type: "string" as const, description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'", nullable: true },
-        ignoreCase: { type: "boolean" as const, description: "Case-insensitive search (default: false)", nullable: true },
-        literal: { type: "boolean" as const, description: "Treat pattern as literal string instead of regex (default: false)", nullable: true },
-        context: { type: "number" as const, description: "Number of lines to show before and after each match (default: 0)", nullable: true },
-        limit: { type: "number" as const, description: "Maximum number of matches to return (default: 100)", nullable: true }
+        ignore_case: { type: "boolean" as const, description: "Case-insensitive search (default: false)", default: false },
+        literal: { type: "boolean" as const, description: "Treat pattern as literal string instead of regex (default: false)", default: false },
+        context: { type: "integer" as const, description: "Number of lines to show before and after each match (default: 0)", default: 0 },
+        limit: { type: "integer" as const, description: "Maximum number of matches to return (default: 100)", default: 100 }
     };
 
     constructor(protected cwd: string) {

@@ -32,8 +32,8 @@ export class EditTool extends BaseTool {
 
     inputs = {
         path: { type: "string" as const, description: "Path to the file to edit (relative or absolute)" },
-        oldText: { type: "string" as const, description: "Exact text to find and replace (must match exactly)" },
-        newText: { type: "string" as const, description: "New text to replace the old text with" }
+        old_text: { type: "string" as const, description: "Exact text to find and replace (must match exactly)" },
+        new_text: { type: "string" as const, description: "New text to replace the old text with" }
     };
 
     constructor(protected cwd: string) {

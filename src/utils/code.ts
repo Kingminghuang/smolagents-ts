@@ -85,31 +85,51 @@ export function fixFinalAnswerCode(code: string): string {
   return fixedCode;
 }
 
+const mapToPythonType = (type: string | undefined): string => {
+  switch (type) {
+    case 'string':
+      return 'str';
+    case 'number':
+      return 'float';
+    case 'integer':
+      return 'int';
+    case 'boolean':
+      return 'bool';
+    case 'object':
+    case 'dict':
+      return 'dict';
+    case 'array':
+    case 'list':
+      return 'list';
+    case 'any':
+      return 'Any';
+    default:
+      return 'Any';
+  }
+};
+
 export function toPythonToolSignature(tool: Tool): string {
   const inputs = tool.inputs || {};
   const args = Object.entries(inputs).map(([name, def]) => {
-    let mappedType = 'any';
-    switch (def?.type) {
-      case 'string':
-        mappedType = 'string';
-        break;
-      case 'number':
-        mappedType = 'number';
-        break;
-      case 'integer':
-        mappedType = 'integer';
-        break;
-      case 'boolean':
-        mappedType = 'boolean';
-        break;
-      case 'object':
-        mappedType = 'object';
-        break;
-      case 'array':
-        mappedType = 'array';
-        break;
+    let mappedType = mapToPythonType(def?.type);
+
+    // Check if it's nullable or optional
+    if (def?.nullable) {
+      // If we want to show Optional[T], we could do that, but usually just T = None covers it
+      // mappedType = `Optional[${mappedType}]`;
     }
-    return `${name}: ${mappedType}`;
+
+    let param = `${name}: ${mappedType}`;
+
+    // Add default value if present
+    if (def?.default !== undefined) {
+      const defaultVal = typeof def.default === 'string' ? `"${def.default}"` : def.default;
+      param += ` = ${defaultVal}`;
+    } else if (def?.nullable) {
+      param += ` = None`;
+    }
+
+    return param;
   });
 
   const argsDoc = Object.entries(inputs)
@@ -118,26 +138,25 @@ export function toPythonToolSignature(tool: Tool): string {
     })
     .join('\n');
 
-  const returnType = tool.output_type ? tool.output_type : 'any';
+  const returnType = mapToPythonType(tool.output_type);
   const schemaSection =
     tool.output_schema !== undefined
       ? `\n${safeStringify(tool.output_schema)
-          .split('\n')
-          .map((line) => `            ${line}`)
-          .join('\n')}`
+        .split('\n')
+        .map((line) => `            ${line}`)
+        .join('\n')}`
       : '';
   const exampleSection =
     tool.output_example !== undefined
       ? `\n\n    Example:\n${safeStringify(tool.output_example)
-          .split('\n')
-          .map((line) => `        ${line}`)
-          .join('\n')}`
+        .split('\n')
+        .map((line) => `        ${line}`)
+        .join('\n')}`
       : '';
   const outputDescription =
     tool.output_description || tool.output_example || tool.output_schema
-      ? `\n\n    Returns:\n        ${tool.output_description || 'See example.'}${
-          tool.output_schema !== undefined ? schemaSection : exampleSection
-        }`
+      ? `\n\n    Returns:\n        ${tool.output_description || 'See example.'}${tool.output_schema !== undefined ? schemaSection : exampleSection
+      }`
       : '';
   const argsSection = argsDoc ? `\n\n    Args:\n${argsDoc}` : `\n\n    Args:\n        None`;
   const docstring = `${tool.description}${argsSection}${outputDescription}\n`;

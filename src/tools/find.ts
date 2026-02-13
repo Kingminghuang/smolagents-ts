@@ -37,8 +37,8 @@ export class FindTool extends BaseTool {
 
     inputs = {
         pattern: { type: "string" as const, description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts" },
-        path: { type: "string" as const, description: "Directory to search in (default: current directory)", nullable: true },
-        limit: { type: "number" as const, description: "Maximum number of results (default: 1000)", nullable: true }
+        path: { type: "string" as const, description: "Directory to search in (default: current directory)", default: "." },
+        limit: { type: "integer" as const, description: "Maximum number of results (default: 1000)", default: 1000 }
     };
 
     constructor(protected cwd: string) {

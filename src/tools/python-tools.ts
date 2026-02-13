@@ -13,7 +13,7 @@ def _resolve_path(path: str) -> Path:
 `;
 
 export const PYTHON_READ_TOOL = `
-def read(path: str, offset: int = 1, limit: int = None, **kwargs) -> dict:
+def read(path: str, offset: int = 1, limit: int = None) -> dict:
     """Read the contents of a file. Supports text files and images (jpg, png, gif, webp). 
     Images are sent as attachments. For text files, output is truncated to 2000 lines or 
     200KB (whichever is hit first). Use offset/limit for large files. When you need the 
@@ -24,7 +24,7 @@ def read(path: str, offset: int = 1, limit: int = None, **kwargs) -> dict:
     
     Args:
         path: Path to the file to read (relative or absolute)
-        offset: Line number to start reading from (1-indexed), nullable
+        offset: Line number to start reading from (1-indexed), default 1
         limit: Maximum number of lines to read, nullable
     
     Returns:
@@ -39,10 +39,6 @@ def read(path: str, offset: int = 1, limit: int = None, **kwargs) -> dict:
     MAX_LINES = 2000
     MAX_BYTES = 200 * 1024  # 200KB
     
-    # Handle aliases
-    if offset == 1 and 'start_line' in kwargs:
-        offset = kwargs['start_line']
-
     file_path = _resolve_path(path)
 
     if not file_path.exists():
@@ -97,6 +93,8 @@ def read(path: str, offset: int = 1, limit: int = None, **kwargs) -> dict:
     total_lines = len(lines)
 
     # Apply offset
+    if offset is None:
+        offset = 1
     start_line = offset - 1 if offset > 0 else 0
     if start_line >= total_lines:
         raise ValueError(f"Offset {offset} is beyond file length of {total_lines} lines")
@@ -164,7 +162,7 @@ def write(path: str, content: str) -> dict:
 `;
 
 export const PYTHON_EDIT_TOOL = `
-def edit(path: str, old_text: str = None, new_text: str = None, **kwargs) -> dict:
+def edit(path: str, old_text: str, new_text: str) -> dict:
     """Edit a file by replacing exact text. The oldText must match exactly (including 
     whitespace). Use this for precise, surgical edits.
     
@@ -180,14 +178,8 @@ def edit(path: str, old_text: str = None, new_text: str = None, **kwargs) -> dic
         dict: A dictionary with 'content' field containing:
             [{'type': 'text', 'text': 'Successfully replaced text in <path>'}]
     """
-    # Handle aliases for compatibility with agent predictions
-    if old_text is None:
-        old_text = kwargs.get('old_str') or kwargs.get('oldText')
-    if new_text is None:
-        new_text = kwargs.get('new_str') or kwargs.get('newText')
-
     if old_text is None or new_text is None:
-        raise ValueError("Missing required arguments: old_text/oldText and new_text/newText")
+        raise ValueError("Missing required arguments: old_text or new_text")
 
     file_path = _resolve_path(path)
     if not file_path.exists():
@@ -210,7 +202,7 @@ def edit(path: str, old_text: str = None, new_text: str = None, **kwargs) -> dic
 
 export const PYTHON_GREP_TOOL = `
 def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = False, 
-         literal: bool = False, context: int = 0, limit: int = 100, **kwargs) -> dict:
+         literal: bool = False, context: int = 0, limit: int = 100) -> dict:
     """Search file contents for a pattern. Returns matching lines with file paths and 
     line numbers. Respects .gitignore. Output is truncated to 100 matches or 200KB 
     (whichever is hit first). Long lines are truncated to 500 chars.
@@ -219,22 +211,18 @@ def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = Fa
     
     Args:
         pattern: Search pattern (regex or literal string)
-        path: Directory or file to search (default: current directory), nullable
+        path: Directory or file to search (default: current directory)
         glob: Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts', nullable
-        ignoreCase: Case-insensitive search (default: false), nullable
-        literal: Treat pattern as literal string instead of regex (default: false), nullable
-        context: Number of lines to show before and after each match (default: 0), nullable
-        limit: Maximum number of matches to return (default: 100), nullable
+        ignoreCase: Case-insensitive search (default: false)
+        literal: Treat pattern as literal string instead of regex (default: false)
+        context: Number of lines to show before and after each match (default: 0)
+        limit: Maximum number of matches to return (default: 100)
     
     Returns:
         dict: A dictionary with 'content' field containing:
             [{'type': 'text', 'text': '<path>:<line_num>: <matching line>\n...'}]
             If no matches found: [{'type': 'text', 'text': 'No matches found'}]
     """
-    # Handle parameter aliases
-    if 'ignore_case' not in kwargs and 'ignoreCase' in kwargs:
-        ignore_case = kwargs['ignoreCase']
-    
     search_path = _resolve_path(path)
     mount_root = Path(MOUNT_POINT)
 
@@ -365,8 +353,8 @@ def find(pattern: str, path: str = '.', limit: int = 1000) -> dict:
     
     Args:
         pattern: Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'
-        path: Directory to search in (default: current directory), nullable
-        limit: Maximum number of results (default: 1000), nullable
+        path: Directory to search in (default: current directory)
+        limit: Maximum number of results (default: 1000)
     
     Returns:
         dict: A dictionary with 'content' field containing:
@@ -442,8 +430,8 @@ def ls(path: str = '.', limit: int = 500) -> dict:
     IMPORTANT: All arguments must be passed as keyword arguments (e.g., ls(path=".", limit=500)).
     
     Args:
-        path: Directory to list (default: current directory), nullable
-        limit: Maximum number of entries to return (default: 500), nullable
+        path: Directory to list (default: current directory)
+        limit: Maximum number of entries to return (default: 500)
     
     Returns:
         dict: A dictionary with 'content' field containing:
