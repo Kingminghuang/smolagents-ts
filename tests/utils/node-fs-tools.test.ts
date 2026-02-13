@@ -415,9 +415,7 @@ describe("Node FS Tools", () => {
             expect(output).toContain("match");
             expect(output).toContain("after");
         });
-    });
 
-    describe("grep tool", () => {
         it("should include filename when searching a single file", async () => {
             const testFile = join(testDir, "example.txt");
             writeFileSync(testFile, "first line\nmatch line\nlast line");

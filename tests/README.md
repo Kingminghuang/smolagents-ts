@@ -7,25 +7,7 @@ Comprehensive test suite for the smolagents-ts TypeScript project.
 ```
 tests/
 ├── setup.ts                    # Test configuration
-├── fixtures/                   # Test fixtures and mocks
-│   ├── mock-model.ts          # Mock LLM model
-│   ├── mock-tools.ts          # Mock tools
-│   └── test-data.ts           # Test data
-├── unit/                      # Unit tests
-│   ├── agents/                # Agent tests
-│   ├── models/                # Model tests
-│   ├── memory/                # Memory tests
-│   ├── tools/                 # Tool tests
-│   └── utils/                 # Utility tests
-├── integration/               # Integration tests
-│   ├── agent-run.test.ts      # Complete agent runs
-│   ├── code-agent.test.ts     # Code agent integration
-│   ├── code-agent-real.test.ts # Code agent with real Pyodide
-│   ├── streaming.test.ts      # Streaming functionality
-│   └── tool-execution.test.ts # Tool execution
-└── wasm/                      # Wasm/Python executor tests
-    ├── python-executor-default-tools.test.ts
-    └── python-executor-fs-tools.test.ts
+└── utils/                      # Utility tests
 ```
 
 ## Running Tests
@@ -47,7 +29,7 @@ npm run test:e2e
 npm run test:wasm
 
 # Run specific test file
-npm test tests/unit/agents/tool-calling-agent.test.ts
+npm test tests/utils/node-fs-tools.test.ts
 
 # Run in non-watch mode
 npm test -- --run
@@ -102,58 +84,28 @@ describe('ComponentName', () => {
 
 ### Integration Tests
 
-Integration tests should test complete workflows:
+Tests should test complete workflows:
 
 ```typescript
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { ToolCallingAgent } from '../../src/agents/tool-calling-agent.js';
-import { createMockModel, mockFinalAnswerResponse } from '../fixtures/mock-model.js';
 
 describe('Feature Integration', () => {
-  let agent: ToolCallingAgent;
-  let mockModel: ReturnType<typeof createMockModel>;
-
-  beforeEach(() => {
-    mockModel = createMockModel();
-    agent = new ToolCallingAgent({
+  it('should complete a full workflow', async () => {
+    const agent = new ToolCallingAgent({
       tools: [],
       model: mockModel,
     });
-  });
-
-  it('should complete a full workflow', async () => {
-    mockModel.addResponse(mockFinalAnswerResponse('Done'));
 
     const result = await agent.run('Task');
-
     expect(result).toBe('Done');
   });
 });
 ```
 
-## Test Fixtures
+## Test Setup
 
-### Mock Model
-
-The `MockModel` allows you to simulate LLM responses:
-
-```typescript
-import { createMockModel, mockToolCallResponse } from './fixtures/mock-model.js';
-
-const model = createMockModel();
-model.addResponse(mockToolCallResponse('calculator', { operation: 'add', a: 1, b: 2 }));
-```
-
-### Mock Tools
-
-Pre-built mock tools for testing:
-
-```typescript
-import { MockCalculatorTool, MockSearchTool } from './fixtures/mock-tools.js';
-
-const calculator = new MockCalculatorTool();
-const search = new MockSearchTool();
-```
+Tests use the standard Vitest setup defined in `setup.ts`.
 
 ## Coverage
 

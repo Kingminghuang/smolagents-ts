@@ -1,6 +1,20 @@
 import { loadPyodide, type PyodideInterface } from 'pyodide';
 import { AgentExecutionError } from './errors.js';
 
+/**
+ * File System Access API types for browser-native file system mounting
+ * These are defined locally to avoid requiring DOM lib for Node.js builds
+ */
+export interface FileSystemHandle {
+  readonly kind: 'file' | 'directory';
+  readonly name: string;
+}
+
+export interface FileSystemDirectoryHandle extends FileSystemHandle {
+  readonly kind: 'directory';
+  requestPermission(descriptor?: { mode: 'read' | 'readwrite' }): Promise<'granted' | 'denied'>;
+}
+
 interface PyodideGlobalSetter {
   globals: {
     set: (name: string, value: unknown) => void;
@@ -41,9 +55,11 @@ export interface PyodideExecutorOptions {
   max_operations?: number;
   max_while_iterations?: number;
   allowed_dangerous_builtins?: string[];
-  // NODEFS configuration
-  workDir?: string;  // Node.js directory to mount (default: process.cwd())
+  // File system configuration
+  fsMode?: 'nodefs' | 'nativefs';  // File system mode: nodefs (Node.js) or nativefs (Browser File System Access API)
+  workDir?: string;  // Node.js directory to mount (default: process.cwd()), used with fsMode='nodefs'
   mountPoint?: string;  // Pyodide mount path (default: "/mnt")
+  directoryHandle?: FileSystemDirectoryHandle;  // FileSystemDirectoryHandle for fsMode='nativefs'
 }
 
 export const BASE_BUILTIN_MODULES = [
@@ -69,10 +85,13 @@ export class PyodideExecutor {
   private allowedDangerousBuiltins: string[] = [];
   private toolNames: string[] = [];
   private runtimeReady = false;
-  // NODEFS configuration and state
+  // File system configuration and state
+  private fsMode: 'nodefs' | 'nativefs';
   private workDir: string;
   private mountPoint: string;
+  private directoryHandle?: FileSystemDirectoryHandle;
   private isMounted = false;
+  private nativeFsSync?: { syncfs: () => Promise<void> };
 
   private getConverters() {
     const api = this.pyodide as unknown as {
@@ -221,9 +240,16 @@ export class PyodideExecutor {
     this.maxOperations = options.max_operations ?? 100000;
     this.maxWhileIterations = options.max_while_iterations ?? 10000;
     this.allowedDangerousBuiltins = options.allowed_dangerous_builtins ?? [];
-    // Initialize NODEFS configuration
+    // Initialize file system configuration
+    this.fsMode = options.fsMode ?? 'nodefs';
     this.workDir = options.workDir ?? process.cwd();
     this.mountPoint = options.mountPoint ?? '/mnt';
+    this.directoryHandle = options.directoryHandle;
+
+    // Validate fsMode
+    if (this.fsMode === 'nativefs' && !this.directoryHandle) {
+      throw new Error('directoryHandle is required when fsMode is "nativefs"');
+    }
   }
 
   async init() {
@@ -251,23 +277,53 @@ export class PyodideExecutor {
         const indexURL = `${pyodideDir}${pathModule.sep}`;
         this.pyodide = (await loadPyodide({ indexURL })) as PyodideInterface & PyodideGlobalSetter;
 
-        // Mount NODEFS in Node.js environment
-        // Maps Pyodide's {mountPoint} → Node.js's {workDir}
-        try {
-          this.pyodide.FS.mkdirTree(this.mountPoint);
-          this.pyodide.FS.mount(
-            this.pyodide.FS.filesystems.NODEFS,
-            { root: this.workDir },
-            this.mountPoint
-          );
-          this.isMounted = true;
-        } catch (error) {
-          console.error('Failed to mount NODEFS:', error);
-          // Continue without mounting - tools will fail but Pyodide still works
+        // Mount file system based on fsMode
+        if (this.fsMode === 'nodefs') {
+          // Mount NODEFS in Node.js environment
+          // Maps Pyodide's {mountPoint} → Node.js's {workDir}
+          try {
+            /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+            this.pyodide.FS.mkdirTree(this.mountPoint);
+            this.pyodide.FS.mount(
+              this.pyodide.FS.filesystems.NODEFS,
+              { root: this.workDir },
+              this.mountPoint
+            );
+            /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
+            this.isMounted = true;
+          } catch (error) {
+            console.error('Failed to mount NODEFS:', error);
+            // Continue without mounting - tools will fail but Pyodide still works
+          }
         }
+        // Note: nativefs mode is not supported in Node.js environment
+        // It requires a browser environment with File System Access API
       } else {
         // Non-browser environment (use default indexURL)
         this.pyodide = (await loadPyodide()) as PyodideInterface & PyodideGlobalSetter;
+      }
+
+      // Mount NativeFS if in browser and fsMode is 'nativefs'
+      if (this.pyodide && this.fsMode === 'nativefs' && this.directoryHandle) {
+        try {
+          // Request permission if not already granted
+          const permissionStatus = await this.directoryHandle.requestPermission({
+            mode: 'readwrite',
+          });
+          if (permissionStatus !== 'granted') {
+            throw new Error('readwrite permission not granted for directory');
+          }
+
+          // Mount the directory using Pyodide's mountNativeFS
+          this.nativeFsSync = await this.pyodide.mountNativeFS(
+            this.mountPoint,
+            this.directoryHandle
+          );
+          this.isMounted = true;
+        } catch (error) {
+          console.error('Failed to mount NativeFS:', error);
+          // Continue without mounting - tools will fail but Pyodide still works
+        }
       }
     }
   }
@@ -371,14 +427,19 @@ os.environ['PYODIDE_MOUNT_POINT'] = '${this.mountPoint}'
   }
 
   /**
-   * Cleanup method: unmount NODEFS and release resources
+   * Cleanup method: sync and unmount file system, release resources
    * MUST be called when PyodideExecutor is no longer needed
    */
   async cleanup() {
     if (!this.pyodide) return;
 
     try {
-      // Unmount NODEFS if mounted
+      // Sync NativeFS before unmounting to persist changes
+      if (this.fsMode === 'nativefs' && this.nativeFsSync) {
+        await this.nativeFsSync.syncfs();
+      }
+
+      // Unmount file system if mounted
       if (this.isMounted) {
         this.pyodide.FS.unmount(this.mountPoint);
         this.isMounted = false;

@@ -13,7 +13,7 @@ def _resolve_path(path: str) -> Path:
 `;
 
 export const PYTHON_READ_TOOL = `
-def read(path: str, offset: int = 1, limit: int = 2000, **kwargs) -> dict:
+def read(path: str, offset: int = 1, limit: int = None, **kwargs) -> dict:
     """Read the contents of a file. Supports text files and images (jpg, png, gif, webp). 
     Images are sent as attachments. For text files, output is truncated to 2000 lines or 
     200KB (whichever is hit first). Use offset/limit for large files. When you need the 
@@ -34,6 +34,10 @@ def read(path: str, offset: int = 1, limit: int = 2000, **kwargs) -> dict:
             - For binary files: [{'type': 'text', 'text': <size info>}]
     """
     import base64
+    
+    # Constants for truncation
+    MAX_LINES = 2000
+    MAX_BYTES = 200 * 1024  # 200KB
     
     # Handle aliases
     if offset == 1 and 'start_line' in kwargs:
@@ -90,17 +94,41 @@ def read(path: str, offset: int = 1, limit: int = 2000, **kwargs) -> dict:
     # Handle text files
     content = buffer.decode('utf-8')
     lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
 
-    # Apply offset and limit
+    # Apply offset
     start_line = offset - 1 if offset > 0 else 0
-    selected_lines = lines[start_line:start_line+limit] if limit else lines[start_line:]
+    if start_line >= total_lines:
+        raise ValueError(f"Offset {offset} is beyond file length of {total_lines} lines")
+    
+    # Calculate effective limit respecting MAX_LINES and user-provided limit
+    remaining_lines = total_lines - start_line
+    effective_limit = min(remaining_lines, MAX_LINES)
+    if limit is not None:
+        effective_limit = min(effective_limit, limit)
+    
+    selected_lines = lines[start_line:start_line + effective_limit]
     text = ''.join(selected_lines)
     
+    # Check byte limit
+    text_bytes = text.encode('utf-8')
+    if len(text_bytes) > MAX_BYTES:
+        # Truncate to byte limit
+        truncated_bytes = text_bytes[:MAX_BYTES]
+        # Find the last complete line
+        last_newline = truncated_bytes.rfind(b'\\n')
+        if last_newline > 0:
+            truncated_bytes = truncated_bytes[:last_newline + 1]
+        text = truncated_bytes.decode('utf-8', errors='ignore')
+        # Recalculate effective_limit based on byte truncation
+        effective_limit = text.count('\\n') + (1 if text and not text.endswith('\\n') else 0)
+    
     # Add truncation notice if needed
-    if limit and start_line + limit < len(lines):
-        remaining = len(lines) - (start_line + limit)
-        next_offset = start_line + limit + 1
-        text += f"\\n\\n[{remaining} more lines in file. Use offset={next_offset} to continue.]"
+    lines_shown = start_line + effective_limit
+    if lines_shown < total_lines:
+        remaining = total_lines - lines_shown
+        next_offset = lines_shown + 1
+        text += "\\n\\n[Showing lines " + str(start_line + 1) + "-" + str(lines_shown) + " of " + str(total_lines) + ". " + str(remaining) + " more lines. Use offset=" + str(next_offset) + " to continue.]"
 
     return {
         'content': [{'type': 'text', 'text': text}]
@@ -207,9 +235,10 @@ def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = Fa
     if 'ignore_case' not in kwargs and 'ignoreCase' in kwargs:
         ignore_case = kwargs['ignoreCase']
     
-    file_path = _resolve_path(path)
+    search_path = _resolve_path(path)
+    mount_root = Path(MOUNT_POINT)
 
-    if not file_path.exists():
+    if not search_path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
     # Build regex flags
@@ -223,21 +252,93 @@ def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = Fa
     except re.error as e:
         raise ValueError(f"Invalid regex pattern: {e}")
 
-    content = file_path.read_text()
-    lines = content.splitlines()
+    # Compile glob pattern if provided
+    glob_regex = None
+    if glob:
+        # Convert glob to regex (handle ** and *)
+        glob_pattern = glob.replace('.', r'\.')
+        glob_pattern = glob_pattern.replace('**/', '<<<DOUBLESTAR>>>')
+        glob_pattern = glob_pattern.replace('**', '<<<DOUBLESTAR>>>')
+        glob_pattern = glob_pattern.replace('*', '[^/]*')
+        glob_pattern = glob_pattern.replace('<<<DOUBLESTAR>>>', '.*')
+        glob_regex = re.compile(glob_pattern)
+
+    # Load .gitignore patterns
+    gitignore_patterns = []
+    gitignore_path = mount_root / '.gitignore'
+    if gitignore_path.exists():
+        try:
+            gitignore_content = gitignore_path.read_text()
+            for line in gitignore_content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    gitignore_patterns.append(line)
+        except:
+            pass
+
+    def _is_gitignored(file_path: Path) -> bool:
+        """Check if file matches gitignore patterns"""
+        rel_path = str(file_path.relative_to(mount_root))
+        for pattern in gitignore_patterns:
+            # Simple gitignore matching
+            if pattern in rel_path:
+                return True
+            if pattern.endswith('/'):
+                if rel_path.startswith(pattern.rstrip('/')):
+                    return True
+        return False
+
+    # Collect files to search
+    files_to_search = []
+    if search_path.is_file():
+        files_to_search = [search_path]
+    else:
+        for p in search_path.rglob('*'):
+            if p.is_file() and not _is_gitignored(p):
+                # Check glob filter
+                if glob_regex:
+                    rel_path = str(p.relative_to(search_path))
+                    if not glob_regex.search(rel_path):
+                        continue
+                files_to_search.append(p)
+
     matches = []
     match_count = 0
 
-    for i, line in enumerate(lines):
+    for file_path in files_to_search:
         if match_count >= limit:
             break
             
-        if regex.search(line):
-            # Truncate long lines
-            display_line = line[:500] + '...' if len(line) > 500 else line
-            match_text = f"{path}:{i+1}: {display_line}"
-            matches.append(match_text)
-            match_count += 1
+        try:
+            content = file_path.read_text()
+            lines = content.splitlines()
+            rel_path = file_path.relative_to(mount_root)
+            
+            for i, line in enumerate(lines):
+                if match_count >= limit:
+                    break
+                    
+                if regex.search(line):
+                    # Add context lines before
+                    if context > 0:
+                        for j in range(max(0, i - context), i):
+                            ctx_line = lines[j][:500] + '...' if len(lines[j]) > 500 else lines[j]
+                            matches.append(f"{rel_path}:{j+1}: {ctx_line}")
+                    
+                    # Add the match line
+                    display_line = line[:500] + '...' if len(line) > 500 else line
+                    matches.append(f"{rel_path}:{i+1}: {display_line}")
+                    match_count += 1
+                    
+                    # Add context lines after
+                    if context > 0:
+                        for j in range(i + 1, min(len(lines), i + 1 + context)):
+                            ctx_line = lines[j][:500] + '...' if len(lines[j]) > 500 else lines[j]
+                            matches.append(f"{rel_path}:{j+1}: {ctx_line}")
+                        
+        except (UnicodeDecodeError, IOError):
+            # Skip binary or unreadable files
+            continue
 
     if not matches:
         result_text = 'No matches found'
@@ -275,17 +376,52 @@ def find(pattern: str, path: str = '.', limit: int = 1000) -> dict:
     search_path = _resolve_path(path)
     mount_root = Path(MOUNT_POINT)
 
-    # Convert simple glob pattern to regex
-    glob_pattern = pattern.replace('*', '.*')
+    # Convert glob pattern to regex (handle ** and *)
+    glob_pattern = pattern.replace('.', r'\.')
+    glob_pattern = glob_pattern.replace('**/', '<<<DOUBLESTAR>>>')
+    glob_pattern = glob_pattern.replace('**', '<<<DOUBLESTAR>>>')
+    glob_pattern = glob_pattern.replace('*', '[^/]*')
+    glob_pattern = glob_pattern.replace('<<<DOUBLESTAR>>>', '.*')
+    glob_pattern = f'^{glob_pattern}$'
     regex = re.compile(glob_pattern)
+
+    # Load .gitignore patterns
+    gitignore_patterns = []
+    gitignore_path = mount_root / '.gitignore'
+    if gitignore_path.exists():
+        try:
+            gitignore_content = gitignore_path.read_text()
+            for line in gitignore_content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    gitignore_patterns.append(line)
+        except:
+            pass
+
+    def _is_gitignored(file_path: Path) -> bool:
+        """Check if file matches gitignore patterns"""
+        rel_path = str(file_path.relative_to(mount_root))
+        for pattern in gitignore_patterns:
+            # Simple gitignore matching
+            if pattern in rel_path:
+                return True
+            if pattern.endswith('/'):
+                if rel_path.startswith(pattern.rstrip('/')):
+                    return True
+            if pattern.startswith('*.'):
+                if rel_path.endswith(pattern[1:]):
+                    return True
+        return False
 
     matches = []
     for p in search_path.rglob('*'):
-        if p.is_file() and regex.search(p.name):
+        if p.is_file() and not _is_gitignored(p):
             rel_path = p.relative_to(mount_root)
-            matches.append(str(rel_path))
-            if len(matches) >= limit:
-                break
+            # Match against the full relative path
+            if regex.search(str(rel_path)):
+                matches.append(str(rel_path))
+                if len(matches) >= limit:
+                    break
 
     result_text = '\\n'.join(matches) if matches else 'No files found'
 

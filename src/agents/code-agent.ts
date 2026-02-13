@@ -1,7 +1,12 @@
 import type { PromptTemplates, MultiStepAgentConfig } from '../types/index.js';
 import { ActionStep, AgentMemory } from '../memory/index.js';
 import { MultiStepAgent } from './multi-step-agent.js';
-import { PyodideExecutor, type CodeOutput } from '../utils/python-executor.js';
+import {
+  PyodideExecutor,
+  type CodeOutput,
+  type PyodideExecutorOptions,
+  type FileSystemDirectoryHandle,
+} from '../utils/python-executor.js';
 import { loadPromptTemplate } from '../prompts/template-loader.js';
 import { populateTemplate } from '../utils/template.js';
 import { parseCodeBlobs, fixFinalAnswerCode, toPythonToolSignature } from '../utils/code.js';
@@ -12,6 +17,28 @@ export interface CodeAgentConfig extends MultiStepAgentConfig {
   authorized_imports?: string[];
   executor?: PyodideExecutor;
   code_block_tags?: [string, string];
+  /**
+   * File system mode for Pyodide execution:
+   * - 'nodefs': Use NODEFS to mount a local directory (Node.js only)
+   * - 'nativefs': Use File System Access API (browser only)
+   * @default 'nodefs'
+   */
+  fsMode?: 'nodefs' | 'nativefs';
+  /**
+   * Node.js working directory to mount (for fsMode='nodefs')
+   * @default process.cwd()
+   */
+  workDir?: string;
+  /**
+   * Pyodide mount point path
+   * @default '/mnt'
+   */
+  mountPoint?: string;
+  /**
+   * FileSystemDirectoryHandle for browser file access (for fsMode='nativefs')
+   * Must be obtained via showDirectoryPicker()
+   */
+  directoryHandle?: FileSystemDirectoryHandle;
 }
 
 export class CodeAgent extends MultiStepAgent {
@@ -47,7 +74,16 @@ export class CodeAgent extends MultiStepAgent {
 
     this.code_block_tags = config.code_block_tags || ['<code>', '</code>'];
 
-    this.executor = config.executor || new PyodideExecutor(this.authorized_imports);
+    // Build PyodideExecutor options from config
+    const executorOptions: PyodideExecutorOptions = {
+      authorized_imports: this.authorized_imports,
+      fsMode: config.fsMode,
+      workDir: config.workDir,
+      mountPoint: config.mountPoint,
+      directoryHandle: config.directoryHandle,
+    };
+
+    this.executor = config.executor || new PyodideExecutor(this.authorized_imports, executorOptions);
 
     // Re-initialize memory with correct system prompt now that properties are set
     const system_prompt = this.initialize_system_prompt();

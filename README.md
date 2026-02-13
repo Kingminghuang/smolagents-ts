@@ -9,6 +9,7 @@ A lightweight, TypeScript-native AI agent framework with tool calling capabiliti
 - 🧩 **Modular**: Easy to extend with custom tools and models
 - 🤖 **OpenAI Model Included**: `OpenAIModel` built on the official `openai` SDK
 - 🐍 **Code Agent**: Optional `CodeAgent` that executes Python via Pyodide
+- 📁 **File System Access**: Support for both Node.js filesystem and browser File System Access API
 - 🌐 **Browser Bundle**: Build a browser-friendly bundle for demos and E2E tests
 - 🎨 **Type-Safe**: Full TypeScript support with comprehensive types
 - 🚀 **Production Ready**: Built for both Node.js and browser environments
@@ -63,9 +64,58 @@ for await (const event of agent.run('Search for latest AI news', { stream: true 
 }
 ```
 
+## CodeAgent with File System Access
+
+`CodeAgent` can execute Python code with access to the filesystem in both Node.js and browser environments:
+
+### Node.js (NODEFS)
+
+```typescript
+import { CodeAgent } from 'smolagents-ts';
+import { OpenAIModel } from 'smolagents-ts/models';
+
+const agent = new CodeAgent({
+  tools: [],
+  model: new OpenAIModel({ apiKey: process.env.OPENAI_API_KEY }),
+  fsMode: 'nodefs',        // Default mode for Node.js
+  workDir: './my-project', // Local directory to mount
+  mountPoint: '/mnt',      // Mount point in Pyodide
+});
+
+const result = await agent.run('Read all TypeScript files and count lines of code');
+console.log(result);
+
+// Cleanup to unmount filesystem
+await agent.cleanup();
+```
+
+### Browser (File System Access API)
+
+```typescript
+import { CodeAgent } from 'smolagents-ts';
+import { OpenAIModel } from 'smolagents-ts/models';
+
+// Get directory handle from user
+const dirHandle = await showDirectoryPicker();
+
+const agent = new CodeAgent({
+  tools: [],
+  model: new OpenAIModel({ apiKey: 'your-api-key' }),
+  fsMode: 'nativefs',      // Use File System Access API
+  directoryHandle: dirHandle, // FileSystemDirectoryHandle from picker
+  mountPoint: '/mnt',
+});
+
+const result = await agent.run('Analyze the files in /mnt and summarize');
+console.log(result);
+
+// Cleanup syncs changes back to the native filesystem
+await agent.cleanup();
+```
+
 ## Notes
 
-- `SearchTool` and `CodeExecutorTool` are placeholders in this repo (they don’t call a real web search / sandbox by default).
+- `SearchTool` and `CodeExecutorTool` are placeholders in this repo (they don't call a real web search / sandbox by default).
 - `final_answer` is automatically added unless `add_base_tools: false` is set.
 
 ## Documentation
