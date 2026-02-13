@@ -444,7 +444,7 @@ describe("Node FS Tools", () => {
     });
 
     describe("find tool", () => {
-        it("should include hidden files that are not gitignored", async () => {
+        it("should include hidden files", async () => {
             const hiddenDir = join(testDir, ".secret");
             mkdirSync(hiddenDir);
             writeFileSync(join(hiddenDir, "hidden.txt"), "hidden");
@@ -459,18 +459,6 @@ describe("Node FS Tools", () => {
 
             expect(outputLines).toContain("visible.txt");
             expect(outputLines).toContain(".secret/hidden.txt");
-        });
-
-        it("should respect .gitignore", async () => {
-            writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
-            writeFileSync(join(testDir, "ignored.txt"), "ignored");
-            writeFileSync(join(testDir, "kept.txt"), "kept");
-
-            const result = await findTool.forward({ pattern: "**/*.txt", path: testDir });
-
-            const output = getTextOutput(result);
-            expect(output).toContain("kept.txt");
-            expect(output).not.toContain("ignored.txt");
         });
     });
 

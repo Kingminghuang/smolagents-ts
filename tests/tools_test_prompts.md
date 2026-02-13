@@ -258,15 +258,9 @@ These prompts are designed for a `CodeAgent` to generate code that first sets up
 
 ## Find Tool (`findTool`)
 
-### 32. Include hidden files not gitignored
+### 32. Include hidden files
 **Prompt:**
 > Create a hidden directory ".secret/" and a file inside ".secret/hidden.txt". Also create a file "visible.txt".
-> Then find all text files ("**/*.txt") in the current directory.
-> Finally output the find result.
-
-### 33. Respect .gitignore
-**Prompt:**
-> Create a file named ".gitignore" with content "ignored.txt". Create "ignored.txt" and "kept.txt".
 > Then find all text files ("**/*.txt") in the current directory.
 > Finally output the find result.
 
@@ -274,7 +268,7 @@ These prompts are designed for a `CodeAgent` to generate code that first sets up
 
 ## Ls Tool (`lsTool`)
 
-### 34. List dotfiles and directories
+### 33. List dotfiles and directories
 **Prompt:**
 > Create a hidden file ".hidden-file" and a hidden directory ".hidden-dir".
 > Then list the contents of the current directory.

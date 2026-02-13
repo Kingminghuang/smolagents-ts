@@ -126,7 +126,7 @@ digraph Node_CodeAgent_Tools_Validation {
         ]
     }
     
-    // Find Tool Tests (Tests 32-33)
+    // Find Tool Tests (Tests 32)
     subgraph cluster_find_tests {
         label="Find Tool Tests"
         
@@ -135,17 +135,13 @@ digraph Node_CodeAgent_Tools_Validation {
             prompt="Initialize a CodeAgent with ReadTool, WriteTool, EditTool, GrepTool, FindTool, and LsTool.\n\nThen run the CodeAgent with the following task:\n'Create a hidden directory .secret/ and a file inside .secret/hidden.txt. Also create a file visible.txt. Then find all text files (**/*.txt) in the current directory. Finally output the find result.'\n\nSatisfaction: CodeAgent generates code with output including hidden files matching baseline Test 32"
         ]
         
-        test_find_33 [
-            label="Test 33: .gitignore respect",
-            prompt="Initialize a CodeAgent with ReadTool, WriteTool, EditTool, GrepTool, FindTool, and LsTool.\n\nThen run the CodeAgent with the following task:\n'Create a file named .gitignore with content ignored.txt. Create ignored.txt and kept.txt. Then find all text files (**/*.txt) in the current directory. Finally output the find result.'\n\nSatisfaction: CodeAgent generates code with output excluding gitignored files matching baseline Test 33"
-        ]
     }
     
-    // Ls Tool Tests (Test 34)
+    // Ls Tool Tests (Test 33)
     subgraph cluster_ls_tests {
         label="Ls Tool Tests"
         
-        test_ls_34 [
+        test_ls_33 [
             label="Test 34: List dotfiles",
             prompt="Initialize a CodeAgent with ReadTool, WriteTool, EditTool, GrepTool, FindTool, and LsTool.\n\nThen run the CodeAgent with the following task:\n'Create a hidden file .hidden-file and a hidden directory .hidden-dir. Then list the contents of the current directory. Finally output the ls result.'\n\nSatisfaction: CodeAgent generates code with output including dotfiles and directories matching baseline Test 34"
         ]
@@ -206,12 +202,11 @@ digraph Node_CodeAgent_Tools_Validation {
     
     // Find tests flow
     setup_baseline -> test_find_32
-    test_find_32 -> test_find_33
-    test_find_33 -> gate_find
+    test_find_32 -> gate_find
     
     // Ls tests flow
-    setup_baseline -> test_ls_34
-    test_ls_34 -> gate_ls
+    setup_baseline -> test_ls_33
+    test_ls_33 -> gate_ls
     
     // Gates to consolidation
     gate_read -> consolidate_results [label="Yes", condition="outcome=success"]

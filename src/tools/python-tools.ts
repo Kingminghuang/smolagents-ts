@@ -346,8 +346,7 @@ def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = Fa
 export const PYTHON_FIND_TOOL = `
 def find(pattern: str, path: str = '.', limit: int = 1000) -> dict:
     """Search for files by glob pattern. Returns matching file paths relative to the 
-    search directory. Respects .gitignore. Output is truncated to 1000 results or 200KB 
-    (whichever is hit first).
+    search directory. Output is truncated to 1000 results or 200KB (whichever is hit first).
     
     IMPORTANT: All arguments must be passed as keyword arguments (e.g., find(pattern="*.ts", path=".")).
     
@@ -358,61 +357,137 @@ def find(pattern: str, path: str = '.', limit: int = 1000) -> dict:
     
     Returns:
         dict: A dictionary with 'content' field containing:
-            [{'type': 'text', 'text': '<file1>\n<file2>\n...'}]
+            [{'type': 'text', 'text': '<file1>\\n<file2>\\n...'}]
             If no files found: [{'type': 'text', 'text': 'No files found'}]
     """
+    import os
+    import re
+    import fnmatch
+    from typing import List, Optional, Iterator, Union, Set, Dict, Tuple, Any
+
+    # --- Matcher Module ---
+
+    class Matcher:
+        """Handles filename matching using Regex or Glob patterns."""
+        
+        def __init__(self, pattern: str, regex: bool = True, glob: bool = False):
+            if regex and glob:
+                raise ValueError("Cannot specify both regex=True and glob=True")
+            
+            self.regex_mode = regex
+            self.pattern = pattern
+            self._compiled_regex = None
+            
+            if self.regex_mode:
+                self._compiled_regex = re.compile(pattern)
+            elif glob:
+                # Convert glob to regex for robust matching (handling ** and /)
+                # This conversion supports simple recursive globs
+                # Note: fnmatch.translate produces a regex, but it's often too specific or 
+                # platform dependent. We use a manual conversion similar to previous tools
+                # to Ensure ** behavior is consistent.
+                glob_pattern = pattern.replace('.', r'\.')
+                glob_pattern = glob_pattern.replace('**/', '<<<DOUBLESTAR>>>')
+                glob_pattern = glob_pattern.replace('**', '<<<DOUBLESTAR>>>')
+                glob_pattern = glob_pattern.replace('*', '[^/]*')
+                glob_pattern = glob_pattern.replace('<<<DOUBLESTAR>>>', '.*')
+                glob_pattern = f'^{glob_pattern}$'
+                self._compiled_regex = re.compile(glob_pattern)
+                # Switch to regex mode implementation-wise
+                self.regex_mode = True 
+
+        def match(self, filename: str) -> bool:
+            # When using our glob-to-regex conversion, we match against the path string
+            if self.regex_mode:
+                return self._compiled_regex.search(filename) is not None
+            else:
+                # Fallback to simple fnmatch (not used if glob=True specified above)
+                return fnmatch.fnmatchcase(filename, self.pattern)
+
+
+    # --- Walker Module ---
+
+    class Walker:
+        def __init__(self, 
+                    root: str, 
+                    matcher: Matcher, 
+                    include_hidden: bool = False,
+                    file_types: Optional[List[str]] = None):
+            self.root = root
+            self.matcher = matcher
+            self.include_hidden = include_hidden
+            self.file_types = file_types or ["file"]
+            
+            self.do_files = "file" in self.file_types
+            self.do_dirs = "dir" in self.file_types
+
+        def walk(self) -> Iterator[str]:
+            for dirpath, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
+                rel_dir = os.path.relpath(dirpath, self.root)
+                if rel_dir == ".":
+                    rel_dir = ""
+
+                # Prune Dirs
+                if not self.include_hidden:
+                    dirs[:] = [d for d in dirs if not self._is_hidden(d)]
+                    files[:] = [f for f in files if not self._is_hidden(f)]
+
+                # Process Files
+                if self.do_files:
+                    for f in files:
+                        # Construct relative path to match against
+                        f_rel = os.path.join(rel_dir, f) if rel_dir else f
+                        if self.matcher.match(f_rel):
+                            yield os.path.join(dirpath, f)
+
+                # Process Dir
+                if self.do_dirs:
+                    if rel_dir:
+                        # Match directory path
+                        if self.matcher.match(rel_dir):
+                            yield dirpath
+                
+
+        def _is_hidden(self, name: str) -> bool:
+            return name.startswith('.') and name != '.' and name != '..'
+
+    # --- Find Logic ---
+    
     search_path = _resolve_path(path)
-    mount_root = Path(MOUNT_POINT)
+    if not search_path.exists():
+         raise FileNotFoundError(f"Directory not found: {path}")
 
-    # Convert glob pattern to regex (handle ** and *)
-    glob_pattern = pattern.replace('.', r'\.')
-    glob_pattern = glob_pattern.replace('**/', '<<<DOUBLESTAR>>>')
-    glob_pattern = glob_pattern.replace('**', '<<<DOUBLESTAR>>>')
-    glob_pattern = glob_pattern.replace('*', '[^/]*')
-    glob_pattern = glob_pattern.replace('<<<DOUBLESTAR>>>', '.*')
-    glob_pattern = f'^{glob_pattern}$'
-    regex = re.compile(glob_pattern)
-
-    # Load .gitignore patterns
-    gitignore_patterns = []
-    gitignore_path = mount_root / '.gitignore'
-    if gitignore_path.exists():
-        try:
-            gitignore_content = gitignore_path.read_text()
-            for line in gitignore_content.splitlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    gitignore_patterns.append(line)
-        except:
-            pass
-
-    def _is_gitignored(file_path: Path) -> bool:
-        """Check if file matches gitignore patterns"""
-        rel_path = str(file_path.relative_to(mount_root))
-        for pattern in gitignore_patterns:
-            # Simple gitignore matching
-            if pattern in rel_path:
-                return True
-            if pattern.endswith('/'):
-                if rel_path.startswith(pattern.rstrip('/')):
-                    return True
-            if pattern.startswith('*.'):
-                if rel_path.endswith(pattern[1:]):
-                    return True
-        return False
-
+    root_str = str(search_path)
+    
+    # Use glob=True which triggers the regex conversion in Matcher
+    matcher = Matcher(pattern, regex=False, glob=True)
+    # Always include hidden to let the glob pattern decide (e.g. .env or **/*.txt inside .git)
+    # Wait, if we include hidden, standard globs like *.txt won't match .hidden/foo.txt unless we use **.
+    # But if we use match on relative paths, '**' will match hidden dirs if walked.
+    walker = Walker(root_str, matcher, include_hidden=True, file_types=["file"])
+    
+    all_results = list(walker.walk())
+    all_results.sort()
+    
     matches = []
-    for p in search_path.rglob('*'):
-        if p.is_file() and not _is_gitignored(p):
-            rel_path = p.relative_to(mount_root)
-            # Match against the full relative path
-            if regex.search(str(rel_path)):
-                matches.append(str(rel_path))
-                if len(matches) >= limit:
-                    break
+    mount_root = Path(MOUNT_POINT)
+    
+    for abs_path in all_results:
+        try:
+             p_obj = Path(abs_path)
+             if mount_root in p_obj.parents or p_obj == mount_root:
+                 r_path = p_obj.relative_to(mount_root)
+                 matches.append(str(r_path))
+             else:
+                 matches.append(str(abs_path))
+        except ValueError:
+             matches.append(abs_path)
 
+        if len(matches) >= limit:
+            break
+            
     result_text = '\\n'.join(matches) if matches else 'No files found'
-
+    
     return {
         'content': [{
             'type': 'text',

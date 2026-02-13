@@ -321,8 +321,8 @@ async function runTests() {
     }
     console.log();
 
-    // Test 32: Include hidden files not gitignored
-    console.log("--- Test 32: Include hidden files not gitignored ---");
+    // Test 32: Include hidden files
+    console.log("--- Test 32: Include hidden files ---");
     try {
         const hiddenDir = join(testDir, ".secret");
         mkdirSync(hiddenDir);
@@ -336,22 +336,8 @@ async function runTests() {
     }
     console.log();
 
-    // Test 33: Respect .gitignore
-    console.log("--- Test 33: Respect .gitignore ---");
-    try {
-        writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
-        writeFileSync(join(testDir, "ignored.txt"), "ignored");
-        writeFileSync(join(testDir, "kept.txt"), "kept");
-        const result = await findTool.forward({ pattern: "**/*.txt", path: testDir });
-        const output = getTextOutput(result);
-        console.log(output);
-    } catch (error: any) {
-        console.log("ERROR:", error.message);
-    }
-    console.log();
-
-    // Test 34: List dotfiles and directories
-    console.log("--- Test 34: List dotfiles and directories ---");
+    // Test 33: List dotfiles and directories
+    console.log("--- Test 33: List dotfiles and directories ---");
     try {
         writeFileSync(join(testDir, ".hidden-file"), "secret");
         mkdirSync(join(testDir, ".hidden-dir"));

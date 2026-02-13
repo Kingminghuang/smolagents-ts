@@ -179,19 +179,10 @@ const testCases: TestCase[] = [
     },
     task: 'Find all text files (**/*.txt) in the current directory, including hidden ones. Return the list of files found.',
   },
-  {
-    name: 'Test 33: Find respecting .gitignore',
-    setup: (testDir) => {
-      writeFileSync(join(testDir, '.gitignore'), 'ignored.txt\n');
-      writeFileSync(join(testDir, 'ignored.txt'), 'ignored content');
-      writeFileSync(join(testDir, 'kept.txt'), 'kept content');
-    },
-    task: "Find all text files (**/*.txt). Ensure 'ignored.txt' is NOT in the results because of the .gitignore file. Return the list of files found.",
-  },
 
-  // --- Ls Tool Tests (34) ---
+  // --- Ls Tool Tests (33) ---
   {
-    name: 'Test 34: List directory contents',
+    name: 'Test 33: List directory contents',
     setup: (testDir) => {
       writeFileSync(join(testDir, 'file1.txt'), 'content');
       mkdirSync(join(testDir, 'subdir'));
