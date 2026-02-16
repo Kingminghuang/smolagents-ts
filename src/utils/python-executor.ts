@@ -66,6 +66,7 @@ export const BASE_BUILTIN_MODULES = [
   "collections",
   "datetime",
   "itertools",
+  "json",
   "math",
   "queue",
   "random",
@@ -405,7 +406,19 @@ os.environ['PYODIDE_MOUNT_POINT'] = '${this.mountPoint}'
       const result: unknown = await pyodide.runPythonAsync(
         '__smolagents_run(__smolagents_code__, __smolagents_config__)'
       );
-      const jsResult = toJs(result) as { is_final_answer: boolean; value: unknown };
+      
+      // Convert Python result to JS
+      let jsResult = toJs(result) as { is_final_answer: boolean; value: string };
+      
+      // Parse the JSON-serialized value
+      try {
+        jsResult = {
+          is_final_answer: jsResult.is_final_answer,
+          value: JSON.parse(jsResult.value)
+        };
+      } catch {
+        // If parsing fails, use the original value
+      }
 
       return {
         output: jsResult.value,
@@ -683,9 +696,13 @@ async def __smolagents_run(code, config):
         last_expr = user_globals.get("__smolagents_last_expr__")
         user_globals["__smolagents_last_expr__"] = last_expr
 
-        return {"is_final_answer": False, "value": last_expr}
+        # Return the last expression value
+        # Serialize to JSON for clean conversion to JS
+        import json
+        return {"is_final_answer": False, "value": json.dumps(last_expr, default=str)}
     except FinalAnswerException as error:
-        return {"is_final_answer": True, "value": error.value}
+        import json
+        return {"is_final_answer": True, "value": json.dumps(error.value, default=str)}
     except SyntaxError as error:
         raise RuntimeError(__smolagents_format_syntax_error(error))
     except Exception as error:

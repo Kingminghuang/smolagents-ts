@@ -201,133 +201,317 @@ def edit(path: str, old_text: str, new_text: str) -> dict:
 `;
 
 export const PYTHON_GREP_TOOL = `
-def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = False, 
+def grep(pattern: str, path: str = '.', glob: str = None, ignore_case: bool = False,
          literal: bool = False, context: int = 0, limit: int = 100) -> dict:
-    """Search file contents for a pattern. Returns matching lines with file paths and 
-    line numbers. Respects .gitignore. Output is truncated to 100 matches or 200KB 
-    (whichever is hit first). Long lines are truncated to 500 chars.
-    
+    """Search file contents for a pattern. Returns matching lines with file paths and
+    line numbers. Output is truncated to 100 matches or 200KB (whichever is hit first).
+    Long lines are truncated to 500 chars.
+
     IMPORTANT: All arguments must be passed as keyword arguments (e.g., grep(pattern="search", path=".")).
-    
+
     Args:
         pattern: Search pattern (regex or literal string)
         path: Directory or file to search (default: current directory)
         glob: Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts', nullable
-        ignoreCase: Case-insensitive search (default: false)
+        ignore_case: Case-insensitive search (default: false)
         literal: Treat pattern as literal string instead of regex (default: false)
         context: Number of lines to show before and after each match (default: 0)
         limit: Maximum number of matches to return (default: 100)
-    
+
     Returns:
         dict: A dictionary with 'content' field containing:
             [{'type': 'text', 'text': '<path>:<line_num>: <matching line>\n...'}]
             If no matches found: [{'type': 'text', 'text': 'No matches found'}]
     """
-    search_path = _resolve_path(path)
+    import bisect
+    import codecs
+    import fnmatch
+    from typing import Tuple
+
+    # === Internal Classes ===
+
+    class PyGrepError(Exception):
+        pass
+
+    class BinaryOrEncodingError(PyGrepError):
+        pass
+
+    def _match_glob(filepath: str, glob_pattern: str) -> bool:
+        """Check if filepath matches glob pattern."""
+        normalized = filepath.replace(os.sep, '/')
+        if '**' in glob_pattern:
+            from pathlib import PurePosixPath
+            return PurePosixPath(normalized).match(glob_pattern)
+        else:
+            return fnmatch.fnmatch(normalized, glob_pattern)
+
+    def _walk_directory(walk_path: str, recursive: bool = True, glob_pattern: str = None):
+        """Walk directory yielding file paths."""
+        walk_path = os.fspath(walk_path)
+        if os.path.isfile(walk_path):
+            yield walk_path
+            return
+        if not os.path.isdir(walk_path):
+            return
+        if recursive:
+            stack = [walk_path]
+            while stack:
+                current = stack.pop()
+                try:
+                    # Use list() to force evaluation before the with block exits
+                    # This avoids Pyodide iterator exhaustion issues
+                    entries = list(os.scandir(current))
+                    for entry in entries:
+                        try:
+                            if entry.is_symlink():
+                                continue
+                            if entry.is_file():
+                                entry_path = entry.path  # Capture path before closing
+                                if glob_pattern is None or _match_glob(entry_path, glob_pattern):
+                                    yield entry_path
+                            elif entry.is_dir():
+                                stack.append(entry.path)
+                        except (OSError, PermissionError):
+                            continue
+                except PermissionError:
+                    continue
+        else:
+            try:
+                entries = list(os.scandir(walk_path))
+                for entry in entries:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_file():
+                            entry_path = entry.path
+                            if glob_pattern is None or _match_glob(entry_path, glob_pattern):
+                                yield entry_path
+                    except (OSError, PermissionError):
+                        continue
+            except PermissionError:
+                pass
+
+    def _iter_text_chunks(filepath: str, chunk_size: int, encoding: str, errors: str):
+        """Yield decoded text chunks from a file path."""
+        input_stream = None
+        
+        try:
+            input_stream = open(filepath, "rb")
+            decoder = codecs.getincrementaldecoder(encoding)(errors=errors)
+
+            while True:
+                data = input_stream.read(chunk_size)
+                if not data:
+                    break
+                text_chunk = decoder.decode(data, final=False)
+                if text_chunk:
+                    yield text_chunk
+
+            # Final decode
+            try:
+                text_chunk = decoder.decode(b"", final=True)
+                if text_chunk:
+                    yield text_chunk
+            except:
+                pass
+
+        except UnicodeDecodeError:
+            raise BinaryOrEncodingError("Decoding failed")
+        finally:
+            if input_stream:
+                input_stream.close()
+
+    def _truncate_line(text: str, max_length: int = 500) -> Tuple[str, bool]:
+        """Truncate line to max_length characters."""
+        text = text.rstrip('\\r\\n')
+        if len(text) <= max_length:
+            return text, False
+        return text[:max_length] + "...", True
+
+    # === Main Search Logic ===
+
     mount_root = Path(MOUNT_POINT)
+    search_path = _resolve_path(path)
 
     if not search_path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    # Build regex flags
-    flags = re.IGNORECASE if ignore_case else 0
-    
-    # Escape pattern if literal search
+    # Build regex
+    regex_flags = re.IGNORECASE if ignore_case else 0
+    regex_flags |= re.MULTILINE | re.DOTALL
     search_pattern = re.escape(pattern) if literal else pattern
-    
+
     try:
-        regex = re.compile(search_pattern, flags)
+        regex = re.compile(search_pattern, regex_flags)
     except re.error as e:
         raise ValueError(f"Invalid regex pattern: {e}")
 
-    # Compile glob pattern if provided
-    glob_regex = None
-    if glob:
-        # Convert glob to regex (handle ** and *)
-        glob_pattern = glob.replace('.', r'\.')
-        glob_pattern = glob_pattern.replace('**/', '<<<DOUBLESTAR>>>')
-        glob_pattern = glob_pattern.replace('**', '<<<DOUBLESTAR>>>')
-        glob_pattern = glob_pattern.replace('*', '[^/]*')
-        glob_pattern = glob_pattern.replace('<<<DOUBLESTAR>>>', '.*')
-        glob_regex = re.compile(glob_pattern)
-
-    # Load .gitignore patterns
-    gitignore_patterns = []
-    gitignore_path = mount_root / '.gitignore'
-    if gitignore_path.exists():
-        try:
-            gitignore_content = gitignore_path.read_text()
-            for line in gitignore_content.splitlines():
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    gitignore_patterns.append(line)
-        except:
-            pass
-
-    def _is_gitignored(file_path: Path) -> bool:
-        """Check if file matches gitignore patterns"""
-        rel_path = str(file_path.relative_to(mount_root))
-        for pattern in gitignore_patterns:
-            # Simple gitignore matching
-            if pattern in rel_path:
-                return True
-            if pattern.endswith('/'):
-                if rel_path.startswith(pattern.rstrip('/')):
-                    return True
-        return False
-
-    # Collect files to search
+    # Collect files
     files_to_search = []
     if search_path.is_file():
-        files_to_search = [search_path]
+        files_to_search = [str(search_path)]
     else:
-        for p in search_path.rglob('*'):
-            if p.is_file() and not _is_gitignored(p):
-                # Check glob filter
-                if glob_regex:
-                    rel_path = str(p.relative_to(search_path))
-                    if not glob_regex.search(rel_path):
-                        continue
-                files_to_search.append(p)
+        for f in _walk_directory(str(search_path), recursive=True, glob_pattern=glob):
+            files_to_search.append(f)
+    
 
+
+    # Search state
     matches = []
     match_count = 0
+    max_output_bytes = 200 * 1024
+    current_bytes = 0
+    chunk_size = 128 * 1024
+    overlap = 4096
+    max_line_length = 500
 
     for file_path in files_to_search:
-        if match_count >= limit:
+        if match_count >= limit or current_bytes >= max_output_bytes:
             break
-            
+
         try:
-            content = file_path.read_text()
-            lines = content.splitlines()
-            rel_path = file_path.relative_to(mount_root)
-            
-            for i, line in enumerate(lines):
-                if match_count >= limit:
+            # State for this file
+            buffer = ""
+            buffer_start_abs = 0
+            total_scanned = 0
+            last_match_end_abs = -1
+
+            # For context support
+            all_lines = []
+            line_starts = [0]
+            match_events = []
+
+            chunk_iter = _iter_text_chunks(file_path, chunk_size, 'utf-8', 'strict')
+
+            for chunk in chunk_iter:
+                # Binary check - look for null byte
+                if chr(0) in chunk:
+                    raise BinaryOrEncodingError("Binary file")
+
+                # Build line index incrementally
+                base = total_scanned
+                for i, char in enumerate(chunk):
+                    if char == '\\n':
+                        line_starts.append(base + i + 1)
+
+                total_scanned += len(chunk)
+
+                # Rolling buffer with overlap
+                if buffer:
+                    prev_tail = buffer[-overlap:] if len(buffer) > overlap else buffer
+                    buffer = prev_tail + chunk
+                    buffer_start_abs = total_scanned - len(buffer)
+                else:
+                    buffer = chunk
+                    buffer_start_abs = 0
+
+                # Search in buffer
+                for match in regex.finditer(buffer):
+                    start_rel = match.start()
+                    end_rel = match.end()
+
+                    start_abs = buffer_start_abs + start_rel
+                    end_abs = buffer_start_abs + end_rel
+
+                    if start_abs < last_match_end_abs:
+                        continue
+
+                    last_match_end_abs = end_abs
+
+                    # Calculate line/col using bisect
+                    line_idx = bisect.bisect_right(line_starts, start_abs) - 1
+                    line_start_pos = line_starts[line_idx]
+
+                    # Extract full line from buffer
+                    line_end_pos = buffer.find(chr(10), start_rel)
+                    if line_end_pos == -1:
+                        line_end_pos = len(buffer)
+                    full_line = buffer[line_start_pos - buffer_start_abs:line_end_pos]
+                    truncated_line, _ = _truncate_line(full_line, max_line_length)
+
+                    match_events.append({
+                        'start_abs': start_abs,
+                        'end_abs': end_abs,
+                        'line': line_idx + 1,
+                        'text': truncated_line
+                    })
+
+                    if match_count + len(match_events) >= limit:
+                        break
+
+                if match_count + len(match_events) >= limit:
                     break
-                    
-                if regex.search(line):
-                    # Add context lines before
-                    if context > 0:
-                        for j in range(max(0, i - context), i):
-                            ctx_line = lines[j][:500] + '...' if len(lines[j]) > 500 else lines[j]
-                            matches.append(f"{rel_path}:{j+1}: {ctx_line}")
-                    
-                    # Add the match line
-                    display_line = line[:500] + '...' if len(line) > 500 else line
-                    matches.append(f"{rel_path}:{i+1}: {display_line}")
+            
+
+
+            # Process matches for this file
+            rel_path = str(Path(file_path).relative_to(mount_root)) if file_path.startswith(str(mount_root)) else file_path
+
+            # Handle context
+            if context > 0 and match_events:
+                # Re-read file to get all lines for context
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        full_lines = f.read().splitlines()
+                except:
+                    full_lines = []
+
+                yielded_lines = set()
+                output_events = []
+
+                for evt in match_events:
+                    if match_count >= limit:
+                        break
+
+                    match_line = evt['line']
+                    yielded_lines.add(match_line)
+
+                    # Context before
+                    for ctx_line in range(max(1, match_line - context), match_line):
+                        if ctx_line not in yielded_lines and ctx_line <= len(full_lines):
+                            ctx_text, _ = _truncate_line(full_lines[ctx_line - 1], max_line_length)
+                            output_events.append({'line': ctx_line, 'text': ctx_text, 'is_context': True})
+                            yielded_lines.add(ctx_line)
+
+                    # The match
+                    output_events.append({'line': match_line, 'text': evt['text'], 'is_context': False})
                     match_count += 1
-                    
-                    # Add context lines after
-                    if context > 0:
-                        for j in range(i + 1, min(len(lines), i + 1 + context)):
-                            ctx_line = lines[j][:500] + '...' if len(lines[j]) > 500 else lines[j]
-                            matches.append(f"{rel_path}:{j+1}: {ctx_line}")
-                        
-        except (UnicodeDecodeError, IOError):
-            # Skip binary or unreadable files
+
+                    # Context after
+                    for ctx_line in range(match_line + 1, min(len(full_lines) + 1, match_line + 1 + context)):
+                        if ctx_line not in yielded_lines:
+                            ctx_text, _ = _truncate_line(full_lines[ctx_line - 1], max_line_length)
+                            output_events.append({'line': ctx_line, 'text': ctx_text, 'is_context': True})
+                            yielded_lines.add(ctx_line)
+
+                    if match_count >= limit:
+                        break
+
+                # Format output
+                for evt in output_events:
+                    line_out = f"{rel_path}:{evt['line']}: {evt['text']}"
+                    line_bytes = len(line_out.encode('utf-8')) + 1
+                    if current_bytes + line_bytes > max_output_bytes:
+                        break
+                    matches.append(line_out)
+                    current_bytes += line_bytes
+            else:
+                # No context - just add matches
+                for evt in match_events:
+                    if match_count >= limit:
+                        break
+                    line_out = f"{rel_path}:{evt['line']}: {evt['text']}"
+                    line_bytes = len(line_out.encode('utf-8')) + 1
+                    if current_bytes + line_bytes > max_output_bytes:
+                        break
+                    matches.append(line_out)
+                    current_bytes += line_bytes
+                    match_count += 1
+
+        except (BinaryOrEncodingError, UnicodeDecodeError, IOError):
             continue
 
+    # Build result
     if not matches:
         result_text = 'No matches found'
     else:
