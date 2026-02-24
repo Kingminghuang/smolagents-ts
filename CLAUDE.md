@@ -4,25 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-smolagents-ts is a TypeScript-native AI agent framework with tool calling capabilities. It is a port of the Python [smolagents](https://github.com/huggingface/smolagents) library by Hugging Face.
+smolagents-ts is a TypeScript-native AI agent framework with tool calling capabilities. It is a port of the Python [smolagents](https://github.com/huggingface/smolagents) library.
 
 ## Common Commands
 
 ### Build
-- `npm run build` - Build the library (uses `tsup.config.ts`)
-- `npm run build:browser` - Build browser bundle for demos/E2E tests (uses `tsup.browser.config.ts`)
+- `npm run build` - Build the library (ESM + CJS) via `tsup`
+- `npm run build:browser` - Build browser IIFE bundle for demos/E2E tests
+- `npm run build:demo` - Build the demo application
 - `npm run dev` - Watch mode for development
 - `npm run type-check` - TypeScript type checking only
+- `npm run docs` - Generate TypeDoc documentation
 
 ### Test
 - `npm test` - Run unit tests with Vitest (uses mock data by default)
-- `npm run test:wasm` - Run WASM/Pyodide tests (separate vitest config)
 - `npm run test:real` - Run tests with real OpenAI API (requires `OPENAI_API_KEY`)
-- `npm run test:e2e` - Run Playwright E2E browser tests (requires build:browser first)
-- `npm run test:ui` - Open Vitest UI for interactive testing
+- `npm run test:wasm` - Run WASM/Pyodide tests (separate config)
+- `npm run test:e2e` - Run Playwright E2E browser tests (requires `build:browser` first)
 - `npm run test:coverage` - Run tests with coverage report
+- `npm run test:ui` - Open Vitest UI
 
-**Running a single test file:**
+**Running a single test:**
 ```bash
 npm test -- tests/unit/agents/tool-calling-agent.test.ts
 # or with Vitest directly
@@ -35,13 +37,20 @@ npx vitest run tests/unit/agents/tool-calling-agent.test.ts
 - `npm run format` - Format with Prettier
 - `npm run format:check` - Check formatting without writing
 
+## Style Guidelines
+
+- **TypeScript**: Strict mode enabled (`"strict": true`). No unused locals or parameters.
+- **Target**: ES2022.
+- **Formatting**: Prettier is the authority on formatting.
+- **Imports**: Use `.js` extension for local imports in source files (e.g., `import { Foo } from './foo.js'`).
+- **File Naming**: Kebab-case for files (e.g., `tool-calling-agent.ts`).
+
 ## Architecture
 
 ### Core Agent Hierarchy
-
 ```
 MultiStepAgent (abstract base)
-├── ToolCallingAgent - Uses LLM tool-calling to execute tools
+├── ToolCallingAgent - Uses LLM tool-calling (JSON mode) to execute tools
 └── CodeAgent - Generates and executes Python code via Pyodide
 ```
 
@@ -51,7 +60,6 @@ MultiStepAgent (abstract base)
 - `write_memory_to_messages()` - Converts memory to LLM message format
 
 ### Model Interface
-
 ```typescript
 interface Model {
   generate(messages, options?): Promise<ChatMessage>
@@ -59,105 +67,74 @@ interface Model {
   parse_tool_calls(message): ChatMessage
 }
 ```
-
-- `OpenAIModel` is the primary implementation
-- Streaming is optional (`generate_stream?`)
-- Models must convert responses to `ChatMessage` format with `tool_calls` array
+- `OpenAIModel` is the primary implementation.
+- Streaming is optional (`generate_stream?`).
+- Models must convert responses to `ChatMessage` format with `tool_calls` array.
 
 ### Tool System
-
-All tools extend `BaseTool` and implement:
-- `name`, `description`, `inputs` - Metadata for LLM function calling
-- `forward(args)` - Execution logic
-- `to_dict()` - Converts to OpenAI function-calling format (inherited from base)
+All tools extend `BaseTool` (`src/tools/base-tool.ts`) and implement:
+- `name`, `description`, `inputs` - Metadata for LLM function calling.
+- `forward(args)` - Execution logic returning a Promise.
+- `to_dict()` - Converts to OpenAI function-calling format (inherited from base).
 
 Tools are registered in `src/tools/index.ts` exports.
 
-### Memory System
-
-- `AgentMemory` manages conversation history as an array of `MemoryStep` objects
-- Steps include: `TaskStep`, `ActionStep`, `FinalAnswerStep`
-- Memory converts to `ChatMessage[]` via `to_messages()` for LLM context window
-
 ### Python Execution (CodeAgent)
-
-`PyodideExecutor` (in `src/utils/python-executor.ts`) runs Python in-browser or Node.js:
-- Loads Pyodide from CDN in browser
-- Supports `authorized_imports` whitelist
-- Tools can provide `pythonCode` property for Python implementations
+`PyodideExecutor` (`src/utils/python-executor.ts`) runs Python in-browser or Node.js:
+- Loads Pyodide from CDN in browser.
+- Supports `authorized_imports` whitelist.
+- Tools can provide `pythonCode` property for Python implementations.
 - **File System Modes**:
-  - `fsMode: 'nodefs'` (default): Mounts local directory via NODEFS (Node.js only)
-  - `fsMode: 'nativefs'`: Mounts browser File System Access API directory via `mountNativeFS` (browser only)
+  - `fsMode: 'nodefs'` (default): Mounts local directory via NODEFS (Node.js only).
+  - `fsMode: 'nativefs'`: Mounts browser File System Access API directory via `mountNativeFS` (browser only).
 
-**Configuration example:**
-```typescript
-// Node.js with NODEFS (default)
-const agent = new CodeAgent({
-  tools: [],
-  model: model,
-  fsMode: 'nodefs',
-  workDir: '/path/to/files',  // Node.js directory to mount
-  mountPoint: '/mnt',         // Pyodide mount point
-});
+## Development Tasks
 
-// Browser with File System Access API
-const dirHandle = await showDirectoryPicker();
-const agent = new CodeAgent({
-  tools: [],
-  model: model,
-  fsMode: 'nativefs',
-  directoryHandle: dirHandle,  // FileSystemDirectoryHandle
-  mountPoint: '/mnt',
-});
-```
+### Adding a New Tool
+1. Create a new file in `src/tools/` (e.g., `my-tool.ts`).
+2. Extend `BaseTool` and implement required abstract properties/methods.
+3. Define strict input types using `ToolInput` interface.
+4. Export the tool in `src/tools/index.ts`.
+5. Add unit tests in `tests/`.
 
-### Prompt Templates
-
-YAML templates in `src/prompts/` define system prompts:
-- `code-agent.yaml` - For CodeAgent (Python code generation)
-- `toolcalling-agent.yaml` - For ToolCallingAgent (JSON tool calls)
-- `template-loader.ts` - Loads and processes Handlebars-style templates
-
-## Testing Patterns
-
-### Mock Model Pattern
-Tests use `createMockModel()` from `tests/fixtures/mock-model.ts`:
+### Mock Model for Testing
+Use `createMockModel()` from `tests/fixtures/mock-model.ts` to simulate LLM responses:
 
 ```typescript
+import { createMockModel } from '../../fixtures/mock-model';
+
 const mockModel = createMockModel();
 mockModel.addResponse({
   role: 'assistant',
   content: '',
-  tool_calls: [{ id: '1', function: { name: 'tool', arguments: '{}' } }]
+  tool_calls: [{ id: '1', function: { name: 'my_tool', arguments: '{}' } }]
 });
 const agent = new ToolCallingAgent({ tools: [], model: mockModel });
 ```
 
 ### Environment Variables
-- `USE_REAL_DATA=true` - Use real OpenAI API instead of mocks
-- `OPENAI_API_KEY` - Required for real data tests
-- `OPENAI_BASE_URL` - Optional custom endpoint
-- `OPENAI_MODEL` - Optional model override
+- `USE_REAL_DATA=true` - Use real OpenAI API instead of mocks.
+- `OPENAI_API_KEY` - Required for real data tests.
+- `OPENAI_BASE_URL` - Optional custom endpoint.
+- `OPENAI_MODEL` - Optional model override.
 
 ## Build System
 
 ### tsup Configurations
-- `tsup.config.ts` - Node.js library build (ESM + CJS), multiple entry points
-- `tsup.browser.config.ts` - Browser IIFE bundle, bundles all dependencies
-
-### Export Structure
-Package exports three subpaths:
-- `smolagents-ts` - Core agents, memory, logger
-- `smolagents-ts/models` - Model implementations
-- `smolagents-ts/tools` - Built-in tools
+- `tsup.config.ts`: Main library build (ESM + CJS). Entry points:
+  - `src/index.ts` -> `dist/index.js`
+  - `src/models/index.ts` -> `dist/models/index.js`
+  - `src/tools/index.ts` -> `dist/tools/index.js`
+  - `src/utils/index.ts` -> `dist/utils/index.js`
+  - `src/logger/index.ts` -> `dist/logger/index.js`
+- `tsup.browser.config.ts`: Browser IIFE bundle (`dist-browser/smolagents.browser.js`).
 
 ## File Organization
-
 ```
 src/
 ├── agents/          # Agent implementations
 ├── models/          # LLM model integrations
-├── tools/           # Tool implementations (fs-tools, python-tools, etc.)
+├── tools/           # Tool implementations
 ├── memory/          # AgentMemory, MemoryStep classes
 ├── prompts/         # YAML templates and template loader
 ├── types/           # TypeScript interfaces
@@ -165,6 +142,7 @@ src/
 └── logger/          # AgentLogger
 
 tests/
-├── utils/           # Utility and tool tests
-└── README.md        # Testing documentation
+├── unit/            # Unit tests
+├── e2e/             # Playwright E2E tests
+└── fixtures/        # Test fixtures (mock models, etc.)
 ```

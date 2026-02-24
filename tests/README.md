@@ -22,12 +22,6 @@ npm run test:ui
 # Run with coverage
 npm run test:coverage
 
-# Run E2E demo tests (Playwright)
-npm run test:e2e
-
-# Run WASM tests (Pyodide)
-npm run test:wasm
-
 # Run specific test file
 npm test tests/utils/node-fs-tools.test.ts
 
@@ -40,12 +34,6 @@ npm test -- --run
 Integration tests can be configured to run against the real OpenAI API instead of using mock data. This is useful for verifying end-to-end functionality with a real LLM.
 
 Use environment variables to opt in:
-
-```bash
-USE_REAL_DATA=true OPENAI_API_KEY=sk-... npm test
-```
-
-Or use the dedicated script:
 
 ```bash
 OPENAI_API_KEY=sk-... npm run test:real

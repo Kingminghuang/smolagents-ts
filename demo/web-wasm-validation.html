@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web-WASM CodeAgent Validation</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="../dist-browser/smolagents.browser.global.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #0c7a6b;
+            padding-bottom: 10px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #0c7a6b;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #095c50;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            font-weight: 600;
+            margin: 10px 0;
+        }
+        .status-running { color: #0066cc; }
+        .status-pass { color: #28a745; }
+        .status-fail { color: #dc3545; }
+        #output {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .test-result {
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass { background: #d4edda; color: #155724; }
+        .test-fail { background: #f8d7da; color: #721c24; }
+        .test-running { background: #fff3cd; color: #856404; }
+        .summary {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 20px 0;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        .download-btn {
+            background: #6c757d;
+        }
+        .download-btn:hover {
+            background: #545b62;
+        }
+    </style>
+</head>
+<body>
+    <h1>Web-WASM CodeAgent Validation</h1>
+    
+    <div class="card">
+        <h2>Configuration</h2>
+        <div class="form-group">
+            <label for="apiKey">OPENAI_API_KEY</label>
+            <input type="password" id="apiKey" placeholder="sk-..." value="">
+        </div>
+        <div class="form-group">
+            <label for="baseURL">OPENAI_BASE_URL (optional)</label>
+            <input type="text" id="baseURL" placeholder="https://api.openai.com/v1" value="https://api.deepseek.com">
+        </div>
+        <div class="form-group">
+            <label for="model">OPENAI_MODEL</label>
+            <input type="text" id="model" placeholder="gpt-4o" value="deepseek-chat">
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Test Execution</h2>
+        <div>
+            <button id="selectDirBtn">1. Select Test Directory</button>
+            <button id="runTestsBtn" disabled>2. Run All Tests</button>
+            <button id="downloadBtn" class="download-btn" disabled>3. Download Results</button>
+            <button id="clearBtn">Clear Output</button>
+        </div>
+        <div id="directoryStatus">Directory: Not selected</div>
+        <div id="status" class="status-running"></div>
+        <div id="testResults"></div>
+    </div>
+
+    <div class="card">
+        <h2>Detailed Output</h2>
+        <div id="output">Click "Run All Tests" to start validation...</div>
+    </div>
+
+    <script>
+        const { CodeAgent, OpenAIModel, ReadTool, WriteTool, EditTool, GrepTool, FindTool, LsTool } = SmolAgents;
+
+        // Test cases matching the Node-WASM baseline
+        const testCases = [
+            {
+                id: 'test_read_01',
+                name: 'Test 1: Read normal file',
+                task: `Create a file named 'test.txt' with the content:
+Hello, world!
+Line 2
+Line 3
+Then read the file test.txt.
+Finally output the read result.`,
+            },
+            {
+                id: 'test_read_02',
+                name: 'Test 2: Read non-existent file',
+                task: `Ensure that a file named 'nonexistent.txt' does not exist (delete it if it does). 
+Then try to read the file nonexistent.txt and catch any error.
+Finally output the error message.`,
+            },
+            {
+                id: 'test_write_12',
+                name: 'Test 12: Write new file',
+                task: `Write the text 'Test content' to a file called 'write-test.txt'. Return confirmation.`,
+            },
+            {
+                id: 'test_edit_14',
+                name: 'Test 14: Edit file - replace text',
+                setup: async (dirHandle) => {
+                    const fileHandle = await dirHandle.getFileHandle('edit-test.txt', { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write('Hello, world!');
+                    await writable.close();
+                },
+                task: `Edit the file 'edit-test.txt' and replace 'world' with 'testing'. Return the new content.`,
+            },
+        ];
+
+        let directoryHandle = null;
+        let testResults = [];
+
+        const statusEl = document.getElementById('status');
+        const outputEl = document.getElementById('output');
+        const testResultsEl = document.getElementById('testResults');
+        const runTestsBtn = document.getElementById('runTestsBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const directoryStatusEl = document.getElementById('directoryStatus');
+
+        function log(msg) {
+            console.log(msg);
+            outputEl.textContent += msg + '\n';
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        function updateStatus(msg, type = 'running') {
+            statusEl.textContent = msg;
+            statusEl.className = `status-${type}`;
+        }
+
+        function addTestResult(id, name, status, message = '') {
+            const div = document.createElement('div');
+            div.className = `test-result test-${status}`;
+            div.textContent = `${status === 'pass' ? '✅' : status === 'fail' ? '❌' : '⏳'} ${name}${message ? ': ' + message : ''}`;
+            testResultsEl.appendChild(div);
+        }
+
+        async function selectDirectory() {
+            if (!('showDirectoryPicker' in window)) {
+                alert('This browser does not support the File System Access API. Please use Chrome or Edge.');
+                return;
+            }
+
+            try {
+                directoryHandle = await window.showDirectoryPicker();
+                directoryStatusEl.textContent = `Directory: ${directoryHandle.name}`;
+                runTestsBtn.disabled = false;
+                updateStatus('Directory selected. Ready to run tests.', 'pass');
+                log(`Selected directory: ${directoryHandle.name}`);
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`, 'fail');
+                log(`Error selecting directory: ${error.message}`);
+            }
+        }
+
+        async function runAllTests() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const baseURL = document.getElementById('baseURL').value.trim();
+            const modelName = document.getElementById('model').value.trim();
+
+            if (!apiKey) {
+                alert('Please enter OPENAI_API_KEY');
+                return;
+            }
+
+            if (!directoryHandle) {
+                alert('Please select a test directory first');
+                return;
+            }
+
+            runTestsBtn.disabled = true;
+            downloadBtn.disabled = true;
+            testResultsEl.innerHTML = '';
+            outputEl.textContent = '';
+            testResults = [];
+
+            log('=== Web-WASM CodeAgent Validation ===\n');
+            log(`Environment: browser (nativefs mode)`);
+            log(`Directory: ${directoryHandle.name}`);
+            log(`Model: ${modelName || 'gpt-4o'}\n`);
+
+            const model = new OpenAIModel({
+                apiKey,
+                baseURL: baseURL || undefined,
+                defaultModel: modelName || 'gpt-4o',
+                dangerouslyAllowBrowser: true,
+            });
+
+            let passed = 0;
+            let failed = 0;
+
+            for (const testCase of testCases) {
+                updateStatus(`Running: ${testCase.name}...`);
+                addTestResult(testCase.id, testCase.name, 'running');
+                log(`\n${'='.repeat(80)}`);
+                log(`Running: ${testCase.name}`);
+                log('='.repeat(80));
+
+                const startTime = Date.now();
+
+                try {
+                    // Run setup if defined
+                    if (testCase.setup) {
+                        log('Running setup...');
+                        await testCase.setup(directoryHandle);
+                    }
+
+                    // Create agent with nativefs mode
+                    const agent = new CodeAgent({
+                        model,
+                        tools: [
+                            new ReadTool('.'),
+                            new WriteTool('.'),
+                            new EditTool('.'),
+                            new GrepTool('.'),
+                            new FindTool('.'),
+                            new LsTool('.'),
+                        ],
+                        fsMode: 'nativefs',
+                        directoryHandle,
+                        verbosity_level: 1,
+                    });
+
+                    log(`Task: ${testCase.task.substring(0, 100)}...\n`);
+
+                    const result = await agent.run(testCase.task);
+                    const output = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+
+                    log(`\n✅ PASS: ${testCase.name}`);
+                    log(`Output: ${output.substring(0, 200)}...`);
+
+                    testResults.push({
+                        testId: testCase.id,
+                        name: testCase.name,
+                        status: 'pass',
+                        output: output,
+                        duration: Date.now() - startTime,
+                    });
+
+                    // Update the running status to pass
+                    const resultDivs = testResultsEl.querySelectorAll('.test-running');
+                    const lastDiv = resultDivs[resultDivs.length - 1];
+                    if (lastDiv) {
+                        lastDiv.className = 'test-result test-pass';
+                        lastDiv.textContent = `✅ ${testCase.name}`;
+                    }
+
+                    passed++;
+                    await agent.cleanup();
+                } catch (error) {
+                    const errorMsg = error.message || String(error);
+                    log(`\n❌ FAIL: ${testCase.name}`);
+                    log(`Error: ${errorMsg}`);
+
+                    testResults.push({
+                        testId: testCase.id,
+                        name: testCase.name,
+                        status: 'fail',
+                        output: '',
+                        error: errorMsg,
+                        duration: Date.now() - startTime,
+                    });
+
+                    // Update the running status to fail
+                    const resultDivs = testResultsEl.querySelectorAll('.test-running');
+                    const lastDiv = resultDivs[resultDivs.length - 1];
+                    if (lastDiv) {
+                        lastDiv.className = 'test-result test-fail';
+                        lastDiv.textContent = `❌ ${testCase.name}: ${errorMsg.substring(0, 50)}`;
+                    }
+
+                    failed++;
+                }
+            }
+
+            log(`\n${'='.repeat(80)}`);
+            log(`Summary: ${passed} passed, ${failed} failed out of ${testCases.length} tests`);
+            log('='.repeat(80));
+
+            updateStatus(`Completed: ${passed} passed, ${failed} failed`, failed > 0 ? 'fail' : 'pass');
+            runTestsBtn.disabled = false;
+            downloadBtn.disabled = false;
+        }
+
+        function downloadResults() {
+            const baseline = {
+                timestamp: new Date().toISOString(),
+                environment: 'web-wasm',
+                fsMode: 'nativefs',
+                totalTests: testResults.length,
+                passed: testResults.filter(r => r.status === 'pass').length,
+                failed: testResults.filter(r => r.status === 'fail').length,
+                results: testResults,
+            };
+
+            const blob = new Blob([JSON.stringify(baseline, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'test-web-baseline.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            log('\nResults downloaded as test-web-baseline.json');
+        }
+
+        document.getElementById('selectDirBtn').addEventListener('click', selectDirectory);
+        document.getElementById('runTestsBtn').addEventListener('click', runAllTests);
+        document.getElementById('downloadBtn').addEventListener('click', downloadResults);
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            outputEl.textContent = '';
+            testResultsEl.innerHTML = '';
+            updateStatus('Ready', 'pass');
+        });
+
+        updateStatus('Select a directory to begin', 'pass');
+    </script>
+</body>
+</html>

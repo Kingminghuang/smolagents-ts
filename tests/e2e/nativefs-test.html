@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web-WASM NativeFS Test</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="../../dist-browser/smolagents.browser.global.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 900px; margin: 0 auto; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        button { background: #0c7a6b; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #output { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin-top: 10px; }
+        .status { font-weight: 600; margin: 10px 0; }
+        .status-pass { color: #28a745; }
+        .status-fail { color: #dc3545; }
+        .status-running { color: #0066cc; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 8px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        label { font-weight: 600; color: #555; }
+    </style>
+</head>
+<body>
+    <h1>Web-WASM NativeFS Test</h1>
+    
+    <div class="card">
+        <label>API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-...">
+        
+        <label>Base URL (optional)</label>
+        <input type="text" id="baseURL" placeholder="https://api.deepseek.com" value="https://api.deepseek.com">
+        
+        <label>Model</label>
+        <input type="text" id="model" placeholder="deepseek-chat" value="deepseek-chat">
+        
+        <label>Test ID</label>
+        <input type="text" id="testId" placeholder="test_read_01" value="test_read_01">
+    </div>
+
+    <div class="card">
+        <button id="selectDirBtn">1. Select Test Directory</button>
+        <button id="runBtn" disabled>2. Run Test</button>
+        <button id="clearBtn">Clear</button>
+        <div id="status" class="status">Ready - Enter API key and select directory</div>
+        <div id="output"></div>
+    </div>
+
+    <script>
+        const { CodeAgent, OpenAIModel, ReadTool, WriteTool, EditTool, GrepTool, FindTool, LsTool } = SmolAgents;
+
+        let directoryHandle = null;
+        const statusEl = document.getElementById('status');
+        const outputEl = document.getElementById('output');
+        const runBtn = document.getElementById('runBtn');
+        const apiKeyInput = document.getElementById('apiKey');
+
+        // Try to get API key from parent window (for Playwright)
+        if (window.parent !== window) {
+            window.addEventListener('message', (e) => {
+                if (e.data.type === 'setConfig') {
+                    apiKeyInput.value = e.data.apiKey || '';
+                    document.getElementById('baseURL').value = e.data.baseURL || 'https://api.deepseek.com';
+                    document.getElementById('model').value = e.data.model || 'deepseek-chat';
+                    document.getElementById('testId').value = e.data.testId || 'test_read_01';
+                }
+            });
+        }
+
+        function log(msg) {
+            console.log(msg);
+            outputEl.textContent += msg + '\n';
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        function setStatus(msg, type) {
+            statusEl.textContent = msg;
+            statusEl.className = 'status status-' + type;
+        }
+
+        async function selectDirectory() {
+            if (!('showDirectoryPicker' in window)) {
+                setStatus('File System Access API not supported', 'fail');
+                return;
+            }
+
+            try {
+                setStatus('Opening directory picker...', 'running');
+                directoryHandle = await window.showDirectoryPicker();
+                setStatus(`Selected: ${directoryHandle.name}`, 'pass');
+                runBtn.disabled = false;
+                log(`Selected directory: ${directoryHandle.name}`);
+                
+                // Notify parent (for Playwright)
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'directorySelected', name: directoryHandle.name }, '*');
+                }
+            } catch (err) {
+                setStatus(`Error: ${err.message}`, 'fail');
+                log(`Error: ${err.message}`);
+            }
+        }
+
+        async function runTest() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                setStatus('Please enter API key', 'fail');
+                return;
+            }
+
+            if (!directoryHandle) {
+                setStatus('Please select directory first', 'fail');
+                return;
+            }
+
+            runBtn.disabled = true;
+            outputEl.textContent = '';
+            setStatus('Initializing Pyodide...', 'running');
+
+            const testId = document.getElementById('testId').value || 'test_read_01';
+            const baseURL = document.getElementById('baseURL').value;
+            const model = document.getElementById('model').value;
+
+            log(`Test ID: ${testId}`);
+            log(`Directory: ${directoryHandle.name}`);
+            log('Initializing...\n');
+
+            try {
+                const openaiModel = new OpenAIModel({
+                    apiKey,
+                    baseURL: baseURL || undefined,
+                    defaultModel: model || 'deepseek-chat',
+                    dangerouslyAllowBrowser: true,
+                });
+
+                setStatus('Creating CodeAgent with nativefs...', 'running');
+                
+                const agent = new CodeAgent({
+                    model: openaiModel,
+                    tools: [
+                        new ReadTool('.'),
+                        new WriteTool('.'),
+                        new EditTool('.'),
+                        new GrepTool('.'),
+                        new FindTool('.'),
+                        new LsTool('.'),
+                    ],
+                    fsMode: 'nativefs',
+                    directoryHandle,
+                    verbosity_level: 1,
+                });
+
+                // Test cases
+                const testCases = {
+                    test_read_01: {
+                        name: 'Test 1: Read normal file',
+                        task: `Create a file named 'test.txt' with the content:
+Hello, world!
+Line 2
+Line 3
+Then read the file test.txt.
+Finally output the read result.`,
+                        expected: /Hello, world!/,
+                    },
+                    test_write_12: {
+                        name: 'Test 12: Write new file',
+                        task: `Write the text 'Test content' to a file called 'write-test.txt'. Return confirmation.`,
+                        expected: /success/i,
+                    },
+                    test_edit_14: {
+                        name: 'Test 14: Edit file',
+                        task: `Create a file named 'edit-test.txt' with content 'Hello, world!'. Then edit it to replace 'world' with 'testing'. Return the new content.`,
+                        expected: /testing/,
+                    },
+                };
+
+                const testCase = testCases[testId];
+                if (!testCase) {
+                    throw new Error(`Unknown test: ${testId}`);
+                }
+
+                setStatus(`Running: ${testCase.name}...`, 'running');
+                log(`\n=== ${testCase.name} ===`);
+                log(`Task: ${testCase.task.substring(0, 60)}...\n`);
+
+                const startTime = Date.now();
+                const result = await agent.run(testCase.task);
+                const duration = Date.now() - startTime;
+
+                const output = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                
+                log(`\n✅ Completed in ${duration}ms`);
+                log(`Output: ${output.substring(0, 300)}...`);
+
+                // Verify expected pattern
+                if (testCase.expected.test(output)) {
+                    setStatus(`PASS: ${testCase.name}`, 'pass');
+                } else {
+                    setStatus(`FAIL: Output doesn't match expected pattern`, 'fail');
+                }
+
+                // Store result for external access
+                window.__TEST_RESULT__ = {
+                    testId,
+                    name: testCase.name,
+                    status: 'pass',
+                    output,
+                    duration,
+                    timestamp: new Date().toISOString(),
+                };
+
+                await agent.cleanup();
+
+            } catch (err) {
+                const errorMsg = err.message || String(err);
+                setStatus(`FAIL: ${errorMsg}`, 'fail');
+                log(`\n❌ Error: ${errorMsg}`);
+                
+                window.__TEST_RESULT__ = {
+                    testId,
+                    status: 'fail',
+                    error: errorMsg,
+                    timestamp: new Date().toISOString(),
+                };
+            }
+
+            runBtn.disabled = false;
+        }
+
+        document.getElementById('selectDirBtn').addEventListener('click', selectDirectory);
+        document.getElementById('runBtn').addEventListener('click', runTest);
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            outputEl.textContent = '';
+            setStatus('Ready', 'pass');
+        });
+    </script>
+</body>
+</html>
